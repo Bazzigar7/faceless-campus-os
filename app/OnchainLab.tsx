@@ -2,7 +2,7 @@
 
 import { ChangeEvent, useMemo, useState } from "react";
 
-type Tab = "home" | "learn" | "wallet" | "create" | "launchpad" | "drops" | "admin";
+type Tab = "home" | "learn" | "mask" | "wallet" | "create" | "campaigns" | "launchpad" | "passport" | "drops" | "admin";
 
 type Drop = {
   id: number;
@@ -15,20 +15,38 @@ type Drop = {
 
 const navItems: { id: Tab; label: string; mark: string }[] = [
   { id: "home", label: "Home", mark: "⌂" },
-  { id: "learn", label: "Learn with Mask", mark: "M" },
-  { id: "wallet", label: "My wallet", mark: "◇" },
-  { id: "create", label: "Creator studio", mark: "+" },
+  { id: "learn", label: "Learn", mark: "▶" },
+  { id: "mask", label: "Ask Mask", mark: "M" },
+  { id: "create", label: "Build", mark: "+" },
+  { id: "campaigns", label: "Campaigns", mark: "◎" },
   { id: "launchpad", label: "Launchpad", mark: "↗" },
-  { id: "drops", label: "Partner drops", mark: "✦" },
+  { id: "passport", label: "My passport", mark: "◇" },
   { id: "admin", label: "Educator view", mark: "▦" },
 ];
 
-const quests = [
-  { title: "Meet Ethereum", copy: "Understand the network before touching a wallet.", time: "06 min", state: "complete" },
-  { title: "Your first transaction", copy: "Send test ETH and read every part of the receipt.", time: "12 min", state: "active" },
-  { title: "Claim a Faceless head", copy: "Mint your first classroom collectible on Sepolia.", time: "08 min", state: "open" },
-  { title: "Create a team token", copy: "Choose a name, supply and purpose for a test token.", time: "15 min", state: "locked" },
-  { title: "Launch a mini collection", copy: "Turn original student art into a three-piece collection.", time: "18 min", state: "locked" },
+const lessons = [
+  { id: 1, title: "Meet Ethereum", copy: "A shared computer for money, ownership and applications.", time: "0:58", unit: "FOUNDATIONS", state: "complete", action: "Explore the network", video: "https://zwmraqkjvpqnafdfgkiz.supabase.co/storage/v1/object/public/assets/bc1b33b9-875b-4fb0-9c83-9664a979f699-meet-ethereum-v2-faceless-approved.mp4" },
+  { id: 2, title: "Smart contracts", copy: "Rules that execute when their conditions are met.", time: "0:58", unit: "FOUNDATIONS", state: "active", action: "Read a contract", video: "https://zwmraqkjvpqnafdfgkiz.supabase.co/storage/v1/object/public/assets/3df30db4-89ad-4dd7-b34e-6ee44b79e923-ethereum-smart-contracts-v5-faceless-approved.mp4" },
+  { id: 3, title: "Tokenising a watch", copy: "How rules and ownership shares can move onchain.", time: "1:01", unit: "TOKENISATION", state: "open", action: "Create asset shares", video: "https://zwmraqkjvpqnafdfgkiz.supabase.co/storage/v1/object/public/assets/8cc08734-a79f-4930-b5d3-cb83c38125a1-ethereum-rwa-watch-v6-faceless-approved.mp4" },
+  { id: 4, title: "Tokenising a building", copy: "A hypothetical look at rights, rent and smaller shares.", time: "1:20", unit: "TOKENISATION", state: "open", action: "Model a building", video: "https://zwmraqkjvpqnafdfgkiz.supabase.co/storage/v1/object/public/assets/e37d1f22-ddaa-460f-910e-e87193a6b4b7-ethereum-rwa-building-v2-faceless-approved.mp4" },
+  { id: 5, title: "Transaction confirmation", copy: "Follow an Ethereum payment from wallet to confirmation.", time: "1:04", unit: "NETWORK", state: "open", action: "Send test ETH", video: "https://zwmraqkjvpqnafdfgkiz.supabase.co/storage/v1/object/public/assets/5554e138-d284-4fa4-8330-4a1aef84533a-ethereum-tx-confirmation-v1-faceless-approved.mp4" },
+  { id: 6, title: "Validators and Proof of Stake", copy: "Who builds blocks, who checks them and why honesty matters.", time: "0:43", unit: "NETWORK", state: "open", action: "Inspect a validator", video: "https://zwmraqkjvpqnafdfgkiz.supabase.co/storage/v1/object/public/assets/2cb946d3-37b0-4d7b-a6fa-4e0d292a629c-ethereum-validators-pos-v1-faceless-approved.mp4" },
+  { id: 7, title: "Ethereum gas", copy: "Why network work has a fee and why that fee changes.", time: "0:45", unit: "NETWORK", state: "open", action: "Compare gas", video: "https://zwmraqkjvpqnafdfgkiz.supabase.co/storage/v1/object/public/assets/eb6e5f6a-24b4-41d7-8eec-35a357810e96-ethereum-gas-v3-faceless-approved.mp4" },
+  { id: 8, title: "Ethereum supply", copy: "Validator rewards add ETH while base-fee burning removes it.", time: "0:49", unit: "NETWORK", state: "open", action: "View supply", video: "https://zwmraqkjvpqnafdfgkiz.supabase.co/storage/v1/object/public/assets/0edb1abc-9984-4d8e-8c51-bb9be3f11281-ethereum-supply-v2-faceless-approved.mp4" },
+  { id: 9, title: "What is an NFT?", copy: "A unique token that can act as a digital certificate.", time: "0:54", unit: "NFTS", state: "open", action: "Claim your head", video: "https://zwmraqkjvpqnafdfgkiz.supabase.co/storage/v1/object/public/assets/314cb8a5-e80f-483c-88df-b539da820885-ethereum-nft-basics-v3-faceless-approved.mp4" },
+  { id: 10, title: "Art and provenance", copy: "See the issuer, current owner and transfer history.", time: "0:52", unit: "NFTS", state: "open", action: "Mint original art", video: "https://zwmraqkjvpqnafdfgkiz.supabase.co/storage/v1/object/public/assets/caf33a70-a613-44ec-b0c1-c2e8ef8b7e9f-ethereum-nft-art-provenance-v2-faceless-approved.mp4" },
+  { id: 11, title: "A car's digital certificate", copy: "Link official records to a vehicle's ownership history.", time: "0:54", unit: "NFTS", state: "open", action: "View certificate", video: "https://zwmraqkjvpqnafdfgkiz.supabase.co/storage/v1/object/public/assets/8ab52189-adbe-4a34-9373-6a81de53169a-ethereum-nft-car-certificate-v4-faceless-approved.mp4" },
+  { id: 12, title: "Product authenticity", copy: "How official issuers and secure tags can help prove origin.", time: "0:58", unit: "NFTS", state: "open", action: "Verify a product", video: "https://zwmraqkjvpqnafdfgkiz.supabase.co/storage/v1/object/public/assets/48ed2355-cce5-4836-a3d0-471f5551361d-ethereum-nft-product-authenticity-v1-faceless-approved.mp4" },
+  { id: 13, title: "Borrow without selling ETH", copy: "Understand collateral, interest and liquidation risk.", time: "0:59", unit: "DEFI", state: "open", action: "Simulate a loan", video: "https://zwmraqkjvpqnafdfgkiz.supabase.co/storage/v1/object/public/assets/3ff1e0a9-a6d2-4699-80d3-c7005c265227-ethereum-defi-borrow-without-selling-v1-faceless-approved.mp4" },
+  { id: 14, title: "Bank vs smart contract", copy: "Compare traditional finance routes with published DeFi rules.", time: "1:00", unit: "DEFI", state: "open", action: "Compare the routes", video: "https://zwmraqkjvpqnafdfgkiz.supabase.co/storage/v1/object/public/assets/6cc53850-b5d3-4950-83a7-c0801475df67-ethereum-defi-bank-vs-contract-v1-faceless-approved.mp4" },
+  { id: 15, title: "Token swaps and liquidity pools", copy: "How shared pools let a wallet exchange one token for another.", time: "1:06", unit: "DEFI", state: "open", action: "Try a test swap", video: "https://zwmraqkjvpqnafdfgkiz.supabase.co/storage/v1/object/public/assets/9913f480-3109-4b59-a1c1-e777308856f9-ethereum-defi-token-swap-v1-faceless-approved.mp4" },
+];
+
+const campaigns = [
+  { id: 1, brand: "Sticksy", title: "Campus café experience", type: "Creator", category: "Food & Drink", platform: "Instagram", reward: "₹500", places: "18 spots", tone: "coral", brief: "Visit, film the experience and publish an original Reel." },
+  { id: 2, brand: "RKS Builders", title: "Property walkthrough", type: "Faceless Creator", category: "Real Estate", platform: "Instagram", reward: "₹750", places: "8 spots", tone: "blue", brief: "Create a voiceover walkthrough using approved property footage." },
+  { id: 3, brand: "Web3 Partner", title: "Explain one wallet feature", type: "Clipper", category: "Crypto", platform: "YouTube", reward: "$12", places: "24 spots", tone: "violet", brief: "Turn the supplied session into one accurate vertical explainer." },
+  { id: 4, brand: "Campus App", title: "Bring your first five users", type: "User Acquisition", category: "Technology", platform: "Referral", reward: "₹300", places: "40 spots", tone: "green", brief: "Share your tracked link and help five genuine students onboard." },
 ];
 
 const initialDrops: Drop[] = [
@@ -64,6 +82,10 @@ export default function OnchainLab() {
   const [claimedDrops, setClaimedDrops] = useState<number[]>([]);
   const [created, setCreated] = useState(false);
   const [artPreview, setArtPreview] = useState<string | null>(null);
+  const [selectedLesson, setSelectedLesson] = useState(lessons[1]);
+  const [maskQuestion, setMaskQuestion] = useState("");
+  const [maskAnswer, setMaskAnswer] = useState("Ask me anything about the lesson. I’ll use the approved Faceless material and point you to the next activity.");
+  const [claimedCampaigns, setClaimedCampaigns] = useState<number[]>([]);
 
   const wallet = "0x71F4...9A2C";
   const completed = 2 + (headClaimed ? 1 : 0);
@@ -116,12 +138,37 @@ export default function OnchainLab() {
     notify("Draft collection created in the Sepolia sandbox");
   }
 
+  function openLesson(lesson: typeof lessons[number]) {
+    setSelectedLesson(lesson);
+    setActive("learn");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function askMask(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const question = maskQuestion.trim();
+    if (!question) return;
+    const lower = question.toLowerCase();
+    let answer = `In “${selectedLesson.title}”, the key idea is: ${selectedLesson.copy} Your safest next step is the ${selectedLesson.action.toLowerCase()} classroom activity on Sepolia.`;
+    if (lower.includes("gas")) answer = "Gas is the network fee paid for Ethereum to process work. Simple transfers generally use less gas than complex smart-contract actions, and the price rises when demand for block space is high. Open Lesson 7 to see the approved explainer.";
+    if (lower.includes("nft")) answer = "An NFT is a unique token that can act as a public digital certificate. It can show the issuer, current owner and transfer history—but it does not stop an image from being copied. Open Lesson 9, then claim your testnet Faceless Head.";
+    if (lower.includes("real") || lower.includes("money") || lower.includes("risk")) answer = "Everything in this classroom flow is marked Sepolia testnet and has no real monetary value. Mask can explain and guide, but you approve every wallet action yourself.";
+    setMaskAnswer(answer);
+    setMaskQuestion("");
+  }
+
+  function claimCampaign(id: number) {
+    if (claimedCampaigns.includes(id)) return notify("This mission is already in your workspace");
+    setClaimedCampaigns((current) => [...current, id]);
+    notify("Campaign claimed — Mask prepared your brief checklist");
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
         <button className="brand" onClick={() => setActive("home")} aria-label="Faceless Onchain Lab home">
           <span className="brand-glyph"><MaskOrb compact /></span>
-          <span><strong>FACELESS</strong><small>ONCHAIN LAB</small></span>
+          <span><strong>FACELESS</strong><small>CAMPUS OS</small></span>
         </button>
 
         <nav className="main-nav" aria-label="Primary navigation">
@@ -134,9 +181,9 @@ export default function OnchainLab() {
 
         <div className="sidebar-lab-card">
           <div className="tiny-label">CURRENT LAB</div>
-          <strong>Ethereum · Session 01</strong>
+          <strong>Ethereum · 15 lessons</strong>
           <div className="mini-progress"><i style={{ width: `${progress}%` }} /></div>
-          <span>{completed} of 7 quests complete</span>
+          <span>{completed} learning milestones complete</span>
         </div>
 
         <div className="sidebar-profile">
@@ -198,6 +245,11 @@ export default function OnchainLab() {
                 <button onClick={() => setActive("learn")}>Start →</button>
               </section>
 
+              <section className="home-mission card">
+                <div className="section-head"><span><b>LIVE CAMPAIGN</b><small>Matched to your creator mode</small></span><em>₹500</em></div>
+                <div><span className="mission-logo">ST</span><span><b>Campus café experience</b><small>Sticksy · Creator · Instagram</small></span><button onClick={() => setActive("campaigns")}>View mission →</button></div>
+              </section>
+
               <section className="activity-card card">
                 <div className="section-head"><span><b>RECENT ONCHAIN ACTIVITY</b><small>Readable by anyone</small></span><button onClick={() => setActive("wallet")}>View all</button></div>
                 <div className="activity-row"><span className="activity-icon purple">✦</span><span><b>Ethereum Lab Pass</b><small>Minted · 7 min ago</small></span><code>0x8f...21c</code></div>
@@ -216,21 +268,46 @@ export default function OnchainLab() {
           {active === "learn" && (
             <div className="page-stack">
               <section className="page-intro learn-intro">
-                <div><span className="eyebrow">GUIDED BY MASK</span><h2>Ethereum foundations</h2><p>Watch one short lesson, perform one action and inspect the proof.</p></div>
-                <div className="lesson-orb"><MaskOrb compact /><span>Mask online<small>Classroom mode</small></span></div>
+                <div><span className="eyebrow">15 APPROVED VIDEO EXPLAINERS</span><h2>Ethereum foundations</h2><p>Watch a concept, ask Mask about it, then complete the matching activity.</p></div>
+                <button className="lesson-orb" onClick={() => setActive("mask")}><MaskOrb compact /><span>Ask Mask<small>Grounded in this course</small></span></button>
               </section>
-              <div className="quest-list">
-                {quests.map((quest, index) => (
-                  <article key={quest.title} className={`lesson-row ${quest.state}`}>
-                    <span className="lesson-number">{quest.state === "complete" ? "✓" : String(index + 1).padStart(2, "0")}</span>
-                    <div><small>{quest.state === "active" ? "UP NEXT" : quest.state.toUpperCase()}</small><h3>{quest.title}</h3><p>{quest.copy}</p></div>
-                    <span className="lesson-time">{quest.time}</span>
-                    {index === 1 && <button onClick={() => notify("Mask lesson opened in classroom mode")}>Begin</button>}
-                    {index === 2 && <button onClick={claimHead}>{headClaimed ? "Claimed ✓" : "Claim head"}</button>}
-                    {quest.state === "locked" && <span className="lock">LOCKED</span>}
-                  </article>
+              <section className="lesson-player card">
+                <div className="video-frame"><video key={selectedLesson.video} controls preload="metadata" src={selectedLesson.video}>Your browser does not support video playback.</video><span>APPROVED FACELESS LESSON</span></div>
+                <div className="lesson-focus">
+                  <span className="eyebrow">LESSON {String(selectedLesson.id).padStart(2, "0")} · {selectedLesson.unit}</span>
+                  <h3>{selectedLesson.title}</h3>
+                  <p>{selectedLesson.copy}</p>
+                  <div className="lesson-actions"><button className="primary" onClick={() => notify(`${selectedLesson.action} opened in guided mode`)}>{selectedLesson.action} →</button><button className="secondary" onClick={() => setActive("mask")}>Ask Mask</button></div>
+                  <small>Mask answers from the approved course and can bring you back to the exact lesson.</small>
+                </div>
+              </section>
+              <div className="course-head"><div><span className="eyebrow">FULL COURSE</span><h3>15 lessons · 4 modules</h3></div><span>2 complete</span></div>
+              <div className="lesson-library">
+                {lessons.map((lesson) => (
+                  <button key={lesson.id} className={selectedLesson.id === lesson.id ? "library-card active" : "library-card"} onClick={() => openLesson(lesson)}>
+                    <span className="library-number">{lesson.state === "complete" ? "✓" : String(lesson.id).padStart(2, "0")}</span>
+                    <span className="library-copy"><small>{lesson.unit}</small><strong>{lesson.title}</strong><em>{lesson.copy}</em></span>
+                    <span className="library-time">{lesson.time}<b>▶</b></span>
+                  </button>
                 ))}
               </div>
+            </div>
+          )}
+
+          {active === "mask" && (
+            <div className="mask-page">
+              <section className="mask-stage">
+                <div className="mask-stage-copy"><span className="eyebrow">YOUR AI CO-HOST</span><h2>Ask Mask.<br /><em>Then do it.</em></h2><p>Questions are answered from the approved Faceless curriculum, with a lesson and safe next action attached.</p></div>
+                <div className="mask-stage-orb"><div className="signal-ring ring-one" /><div className="signal-ring ring-two" /><MaskOrb /></div>
+              </section>
+              <section className="mask-chat card">
+                <div className="mask-context"><span><b>COURSE CONTEXT</b><small>Ethereum · Lesson {selectedLesson.id}</small></span><button onClick={() => setActive("learn")}>{selectedLesson.title} ↗</button></div>
+                <div className="chat-answer"><MaskOrb compact /><div><small>MASK</small><p>{maskAnswer}</p></div></div>
+                <div className="prompt-chips">{["Why does gas change?", "What makes an NFT unique?", "Is this real money?"].map((prompt) => <button key={prompt} onClick={() => setMaskQuestion(prompt)}>{prompt}</button>)}</div>
+                <form className="mask-form" onSubmit={askMask}><input value={maskQuestion} onChange={(event) => setMaskQuestion(event.target.value)} placeholder="Ask about Ethereum, this lesson or your next activity…" aria-label="Question for Mask" /><button type="submit">Ask Mask →</button></form>
+                <small className="prototype-note">Prototype response mode · Mask does not sign wallet transactions.</small>
+              </section>
+              <section className="mask-tools"><article><span>01</span><b>Understand</b><p>Explain the concept using the lesson you are watching.</p></article><article><span>02</span><b>Create</b><p>Turn the concept into a safe testnet activity.</p></article><article><span>03</span><b>Campaign</b><p>Convert a partner brief into a checklist, hook and script.</p></article></section>
             </div>
           )}
 
@@ -262,6 +339,25 @@ export default function OnchainLab() {
             </div>
           )}
 
+          {active === "campaigns" && (
+            <div className="page-stack">
+              <section className="campaign-hero">
+                <div><span className="eyebrow">FACELESSHUB · NOW INSIDE THE LAB</span><h2>Learn a skill.<br />Use it on a real mission.</h2><p>Choose how you want to participate: appear on camera, create without showing your face, clip supplied content or help acquire genuine users.</p><button className="primary" onClick={() => notify("Mask matched you with two beginner-friendly missions")}>Let Mask match me →</button></div>
+                <div className="campaign-steps"><span><b>1</b> Claim a campaign</span><span><b>2</b> Create and post</span><span><b>3</b> Get verified and paid</span></div>
+              </section>
+              <div className="campaign-toolbar"><div><button className="active">All missions</button><button>Creator</button><button>Faceless</button><button>Clipper</button><button>User acquisition</button></div><label>⌕<input placeholder="Search campaigns or brands…" aria-label="Search campaigns" /></label></div>
+              <div className="campaign-grid">
+                {campaigns.map((campaign) => <article className={`campaign-card ${campaign.tone}`} key={campaign.id}>
+                  <div className="campaign-brand"><span>{campaign.brand.slice(0, 2).toUpperCase()}</span><div><small>{campaign.category} · {campaign.platform}</small><b>{campaign.brand}</b></div><em>LIVE</em></div>
+                  <h3>{campaign.title}</h3><p>{campaign.brief}</p>
+                  <div className="campaign-tags"><span>{campaign.type}</span><span>{campaign.places}</span></div>
+                  <div className="campaign-reward"><span><small>REWARD</small><strong>{campaign.reward}</strong></span><button onClick={() => claimCampaign(campaign.id)}>{claimedCampaigns.includes(campaign.id) ? "In workspace ✓" : "View mission →"}</button></div>
+                </article>)}
+              </div>
+              <section className="campaign-mask card"><MaskOrb compact /><div><span className="eyebrow">MASK CAMPAIGN ASSIST</span><h3>Never face a confusing brief alone.</h3><p>Mask can explain the rules, suggest a hook, build a shot list and check your submission before it reaches the reviewer.</p></div><button onClick={() => setActive("mask")}>Plan with Mask →</button></section>
+            </div>
+          )}
+
           {active === "launchpad" && (
             <div className="page-stack">
               <section className="launch-hero"><div><span className="eyebrow">STUDENT LAUNCHPAD · SEPOLIA</span><h2>Collected in class.<br />Discovered everywhere.</h2><p>Original student work, launched through supervised onchain labs.</p></div><img src="/faceless-cast.png" alt="Faceless character cast" /></section>
@@ -269,6 +365,25 @@ export default function OnchainLab() {
               <div className="market-grid">
                 {marketItems.map((item) => <article className="market-card" key={item.id}><div className="market-image"><img src={item.image} alt={item.title} /><span>{item.tag}</span></div><div className="market-meta"><div><h3>{item.title}</h3><p>by {item.creator}</p></div><span><small>TEST PRICE</small><b>{item.price} Ξ</b></span></div><button onClick={() => notify(`${item.title} added to your testnet collection`)}>Collect on Sepolia</button></article>)}
                 <article className="market-card upcoming"><div><span>＋</span><h3>Your work could be here.</h3><p>Complete the Creator Studio quest to launch.</p><button onClick={() => setActive("create")}>Start creating</button></div></article>
+              </div>
+            </div>
+          )}
+
+          {active === "passport" && (
+            <div className="page-stack">
+              <section className="passport-hero">
+                <div className="passport-identity"><span className="profile-dot large">AK</span><div><span className="eyebrow">FACELESS STUDENT PASSPORT</span><h2>Aanya K.</h2><p>Creator · Builder · Cohort 04</p></div></div>
+                <div className="passport-wallet"><small>CLASSROOM IDENTITY</small><strong>{wallet}</strong><span><i /> Sepolia verified</span></div>
+              </section>
+              <div className="passport-metrics"><article><strong>02</strong><span>Lessons completed</span></article><article><strong>03</strong><span>Onchain actions</span></article><article><strong>{claimedCampaigns.length.toString().padStart(2, "0")}</strong><span>Campaigns joined</span></article><article><strong>{headClaimed ? "03" : "02"}</strong><span>Assets collected</span></article></div>
+              <div className="passport-layout">
+                <section className="card passport-timeline"><div className="section-head"><span><b>PROOF OF PROGRESS</b><small>Learning, building and creating in one record</small></span></div>{[
+                  ["Ethereum foundations", "Completed the introductory lesson and knowledge check", "LEARN"],
+                  ["First classroom wallet", "Created a Sepolia identity for supervised practice", "BUILD"],
+                  ["Ethereum Lab Pass", "Minted a testnet participation credential", "ONCHAIN"],
+                  ["Campus creator profile", "Ready for creator, clipping and acquisition missions", "CREATE"],
+                ].map((entry) => <div className="passport-event" key={entry[0]}><span>{entry[2].slice(0, 1)}</span><div><small>{entry[2]}</small><b>{entry[0]}</b><p>{entry[1]}</p></div><em>VERIFIED</em></div>)}</section>
+                <aside className="passport-side"><section className="card"><span className="eyebrow">SKILL BADGES</span><div className="badge-cloud"><span>Ethereum basics</span><span>Wallet safety</span><span>Content starter</span><span>Testnet explorer</span></div></section><section className="card passport-next"><span className="eyebrow">NEXT MILESTONE</span><h3>Publish your first proof of work.</h3><p>Complete one campaign or launch one original artwork.</p><button onClick={() => setActive("campaigns")}>Find a campaign →</button></section><button className="wallet-link" onClick={() => setActive("wallet")}>Open classroom wallet <span>→</span></button></aside>
               </div>
             </div>
           )}
@@ -296,7 +411,7 @@ export default function OnchainLab() {
         <div className="onboarding-overlay">
           <div className="onboarding-card">
             <div className="onboarding-art"><div className="portal-ring one" /><div className="portal-ring two" /><MaskOrb /><span>SEPOLIA<br />CLASSROOM<br />ACCESS</span></div>
-            <div className="onboarding-copy"><span className="eyebrow">FACELESS ONCHAIN LAB</span><h2>Your first wallet.<br />Your first onchain action.</h2><p>Enter the student demo to see how Google onboarding will create a private classroom profile and a user-controlled testnet wallet.</p><button className="google-button" onClick={enterLab} disabled={loading}><span>G</span>{loading ? "Creating your classroom wallet…" : "Continue with Google"}</button><button className="demo-link" onClick={() => setOnboarded(true)}>Explore without signing in</button><small>Prototype only · No real Google account or blockchain wallet is created yet.</small></div>
+            <div className="onboarding-copy"><span className="eyebrow">FACELESS CAMPUS OS</span><h2>Learn. Build.<br />Create. Earn.</h2><p>One student profile for lessons, Mask guidance, safe testnet practice, creator campaigns and your proof-of-work passport.</p><button className="google-button" onClick={enterLab} disabled={loading}><span>G</span>{loading ? "Preparing your student profile…" : "Continue with Google"}</button><button className="demo-link" onClick={() => setOnboarded(true)}>Explore the student demo</button><small>Prototype only · Google sign-in, wallets, campaign rewards and onchain actions are simulated.</small></div>
           </div>
         </div>
       )}

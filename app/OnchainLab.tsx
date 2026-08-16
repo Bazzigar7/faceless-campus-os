@@ -6,6 +6,8 @@ import LiveMask from "./LiveMask";
 type Tab = "home" | "learn" | "mask" | "wallet" | "create" | "games" | "campaigns" | "launchpad" | "passport" | "drops" | "admin";
 type Course = "blockchain" | "bitcoin" | "ethereum";
 type Chain = "ethereum" | "solana";
+type ContentStage = "empty" | "processing" | "ready";
+type LaunchMode = "testnet" | "mainnet";
 type Lesson = { id: number; title: string; copy: string; time: string; unit: string; state: string; action: string; video?: string; course: Course };
 
 type Drop = {
@@ -88,10 +90,12 @@ const games = [
 ];
 
 const creatorTools = [
-  { number: "01", title: "Shoot a strong Reel", copy: "Framing, light, B-roll, clean audio and the five-shot minimum.", action: "Open shooting guide" },
-  { number: "02", title: "Clip long content", copy: "Find the hook, remove dead space, add context and format for vertical video.", action: "Start clipping lab" },
-  { number: "03", title: "Hook and script lab", copy: "Turn a campaign brief into a first line, structure and call to action.", action: "Draft with Mask" },
-  { number: "04", title: "Edit and subtitle", copy: "Pacing, captions, music, safe zones and a final quality checklist.", action: "View edit checklist" },
+  { number: "01", title: "Phone setup", copy: "Frame vertically, find clean light, protect your audio and set up a simple background.", action: "Open setup guide" },
+  { number: "02", title: "Shoot the five shots", copy: "Capture a hook, wide shot, detail, proof and call to action without overthinking it.", action: "Open shot practice" },
+  { number: "03", title: "Hook and script lab", copy: "Turn a campaign brief into a first line, problem, proof and clear call to action.", action: "Draft with Mask" },
+  { number: "04", title: "On-camera or faceless", copy: "Choose a UGC style that fits you: presenter, voiceover, hands-only, screen or B-roll.", action: "Choose my format" },
+  { number: "05", title: "Edit in Instagram Edits", copy: "Polish pacing, captions, music and safe zones on the phone before publishing.", action: "Open edit checklist" },
+  { number: "06", title: "Submit professionally", copy: "Check the brief, disclosures, links, quality and usage rights before sending work.", action: "Run final checks" },
 ];
 
 const initialDrops: Drop[] = [
@@ -132,6 +136,9 @@ export default function OnchainLab() {
   const [maskQuestion, setMaskQuestion] = useState("");
   const [maskAnswer, setMaskAnswer] = useState("Ask me anything about the lesson. I’ll use the approved Faceless material and point you to the next activity.");
   const [claimedCampaigns, setClaimedCampaigns] = useState<number[]>([]);
+  const [contentStage, setContentStage] = useState<ContentStage>("empty");
+  const [contentName, setContentName] = useState("");
+  const [launchMode, setLaunchMode] = useState<LaunchMode>("testnet");
 
   const ethWallet = "0x71F4...9A2C";
   const solWallet = "8maZ...xQ7P";
@@ -153,6 +160,17 @@ export default function OnchainLab() {
       setOnboarded(true);
       notify("Ethereum and Solana classroom wallets created");
     }, 900);
+  }
+
+  function prepareContent(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setContentName(file.name);
+    setContentStage("processing");
+    window.setTimeout(() => {
+      setContentStage("ready");
+      notify("Rough captions and three clip suggestions are ready");
+    }, 1500);
   }
 
   function claimFaucet() {
@@ -421,6 +439,26 @@ export default function OnchainLab() {
                 <div><span className="eyebrow">THE MAIN STUDENT MONETISATION TRACK</span><h2>Learn content.<br />Use it on a real mission.</h2><p>Learn to shoot, clip, script and edit—then choose whether to appear on camera, work faceless or help a partner acquire genuine users.</p><button className="primary" onClick={() => notify("Mask matched you with two beginner-friendly missions")}>Let Mask match me →</button></div>
                 <div className="campaign-steps"><span><b>1</b> Claim a campaign</span><span><b>2</b> Create and post</span><span><b>3</b> Get verified and paid</span></div>
               </section>
+              <section className="content-lab card">
+                <div className="content-lab-copy">
+                  <span className="eyebrow">FACELESS CONTENT LAB</span>
+                  <h3>Upload once. Start with the useful cuts.</h3>
+                  <p>Faceless prepares a transcript, rough subtitles and suggested short clips. You choose the strongest version, then finish the creative edit on your phone.</p>
+                  <div className="content-pipeline" aria-label="Content workflow">
+                    <span><b>1</b>Shoot</span><i>→</i><span><b>2</b>Auto-prep</span><i>→</i><span><b>3</b>Choose</span><i>→</i><span><b>4</b>Polish</span><i>→</i><span><b>5</b>Submit</span>
+                  </div>
+                  <small className="prototype-note">Prototype: processing is simulated in this version. Production transcription, clip detection and rendered exports require the media-processing service.</small>
+                </div>
+                <div className={`content-workbench ${contentStage}`}>
+                  {contentStage === "empty" && <><span className="upload-mark">↑</span><strong>Upload a raw video</strong><small>MP4, MOV or WebM · vertical or horizontal</small><label className="upload-button">Choose video<input type="file" accept="video/mp4,video/quicktime,video/webm" onChange={prepareContent} /></label></>}
+                  {contentStage === "processing" && <><span className="processing-ring" /><strong>Preparing {contentName}</strong><small>Transcribing · finding hooks · trimming silence</small><div className="processing-bar"><i /></div></>}
+                  {contentStage === "ready" && <><div className="ready-head"><span>✓</span><div><strong>Auto-prep ready</strong><small>{contentName}</small></div><button onClick={() => setContentStage("empty")}>Replace</button></div><div className="output-list"><span><b>Transcript</b><em>Ready · editable</em></span><span><b>Subtitles</b><em>Clean style · 9:16 safe</em></span><span><b>3 clip ideas</b><em>Hook · core point · CTA</em></span></div><div className="clip-row"><button onClick={() => notify("Hook clip selected: 00:04–00:19")}>00:04–00:19 <b>Hook</b></button><button onClick={() => notify("Core clip selected: 00:24–00:43")}>00:24–00:43 <b>Core</b></button><button onClick={() => notify("CTA clip selected: 00:47–00:59")}>00:47–00:59 <b>CTA</b></button></div><button className="handoff-button" onClick={() => notify("Mobile handoff prepared for Instagram Edits")}>Export rough cut for Instagram Edits →</button></>}
+                </div>
+              </section>
+              <section className="hybrid-edit-grid">
+                <article className="card"><span>AUTO PREP</span><h3>Let Faceless do the repetitive work.</h3><p>Transcript, first-pass captions, silence removal, hook detection and rough vertical cuts.</p></article>
+                <article className="card"><span>CREATIVE FINISH</span><h3>Learn the craft inside Instagram Edits.</h3><p>Students control pacing, music, caption style, native effects and the final publish. That editing judgment becomes a monetisable skill.</p></article>
+              </section>
               <div className="creator-school-head"><div><span className="eyebrow">CREATOR SCHOOL</span><h3>Learn the skill before taking the brief.</h3></div><span>Phone-first · Beginner-friendly</span></div>
               <div className="creator-tool-grid">{creatorTools.map((tool) => <article className="creator-tool card" key={tool.number}><span>{tool.number}</span><h3>{tool.title}</h3><p>{tool.copy}</p><button onClick={() => tool.number === "03" ? setActive("mask") : notify(`${tool.title} opened in guided mode`)}>{tool.action} →</button></article>)}</div>
               <div className="campaign-toolbar"><div><button className="active">All missions</button><button>Creator</button><button>Faceless</button><button>Clipper</button><button>User acquisition</button></div><label>⌕<input placeholder="Search campaigns or brands…" aria-label="Search campaigns" /></label></div>
@@ -438,10 +476,12 @@ export default function OnchainLab() {
 
           {active === "launchpad" && (
             <div className="page-stack">
-              <section className="launch-hero"><div><span className="eyebrow">STUDENT LAUNCHPAD · ETHEREUM + SOLANA</span><h2>Collected in class.<br />Discovered everywhere.</h2><p>Original student work, launched through supervised multichain labs.</p></div><img src="/faceless-cast.png" alt="Faceless character cast" /></section>
+              <section className="launch-hero"><div><span className="eyebrow">STUDENT LAUNCHPAD · ETHEREUM + SOLANA</span><h2>Practise safely.<br />Launch when ready.</h2><p>Original student work begins on testnet. Mainnet publishing unlocks only after a successful practice launch and educator review.</p></div><img src="/faceless-cast.png" alt="Faceless character cast" /></section>
+              <div className="launch-mode-switch" role="group" aria-label="Launch network"><button className={launchMode === "testnet" ? "active" : ""} onClick={() => setLaunchMode("testnet")}><b>Testnet studio</b><small>Free practice · classroom wallets</small></button><button className={launchMode === "mainnet" ? "active" : ""} onClick={() => setLaunchMode("mainnet")}><b>Mainnet launch</b><small>Real fees · educator-gated</small></button></div>
+              {launchMode === "mainnet" && <section className="mainnet-gate card"><div><span className="gate-mark">✓</span><div><span className="eyebrow">SUPERVISED MAINNET PATH</span><h3>Prove the launch before paying real fees.</h3><p>Complete wallet safety, publish the collection on testnet, verify ownership and request an educator review. A final wallet confirmation is always required.</p></div></div><ol><li><span>1</span>Safety lesson</li><li><span>2</span>Test launch</li><li><span>3</span>Ownership check</li><li><span>4</span>Educator review</li></ol><button onClick={() => notify("Mainnet review request added to the educator queue")}>Request mainnet review →</button><small>No custodial mainnet wallet is created automatically. Students connect an external wallet and approve real fees themselves.</small></section>}
               <div className="market-toolbar"><div><button className="active">All work</button><button>1 of 1</button><button>Open editions</button><button>New collections</button></div><button className="sort">Newest first⌄</button></div>
               <div className="market-grid">
-                {marketItems.map((item, index) => <article className="market-card" key={item.id}><div className="market-image"><img src={item.image} alt={item.title} /><span>{item.tag} · {index === 1 ? "SOL" : "ETH"}</span></div><div className="market-meta"><div><h3>{item.title}</h3><p>by {item.creator}</p></div><span><small>TEST PRICE</small><b>{index === 1 ? "0.12 SOL" : `${item.price} Ξ`}</b></span></div><button onClick={() => notify(`${item.title} added to your testnet collection`)}>Collect on {index === 1 ? "Solana" : "Sepolia"}</button></article>)}
+                {marketItems.map((item, index) => <article className="market-card" key={item.id}><div className="market-image"><img src={item.image} alt={item.title} /><span>{item.tag} · {index === 1 ? "SOL" : "ETH"}</span></div><div className="market-meta"><div><h3>{item.title}</h3><p>by {item.creator}</p></div><span><small>{launchMode === "testnet" ? "TEST PRICE" : "DISPLAY PRICE"}</small><b>{index === 1 ? "0.12 SOL" : `${item.price} Ξ`}</b></span></div><button onClick={() => notify(launchMode === "testnet" ? `${item.title} added to your testnet collection` : `${item.title} requires wallet confirmation and a real network fee`)}>{launchMode === "testnet" ? `Collect on ${index === 1 ? "Solana" : "Sepolia"}` : "Review mainnet checkout"}</button></article>)}
                 <article className="market-card upcoming"><div><span>＋</span><h3>Your work could be here.</h3><p>Complete the Creator Studio quest to launch.</p><button onClick={() => setActive("create")}>Start creating</button></div></article>
               </div>
             </div>
@@ -482,7 +522,7 @@ export default function OnchainLab() {
           )}
         </div>
 
-        <nav className="mobile-nav" aria-label="Mobile navigation">{navItems.slice(0, 5).map((item) => <button key={item.id} className={active === item.id ? "active" : ""} onClick={() => setActive(item.id)}><span>{item.mark}</span>{item.label.split(" ")[0]}</button>)}</nav>
+        <nav className="mobile-nav" aria-label="Mobile navigation">{navItems.filter((item) => ["home", "learn", "mask", "create", "campaigns"].includes(item.id)).map((item) => <button key={item.id} className={active === item.id ? "active" : ""} onClick={() => setActive(item.id)}><span>{item.mark}</span>{item.id === "campaigns" ? "Earn" : item.label.split(" ")[0]}</button>)}</nav>
       </section>
 
       {!onboarded && (

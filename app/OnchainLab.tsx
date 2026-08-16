@@ -26,6 +26,13 @@ type LaunchMode = "testnet" | "mainnet";
 type Lesson = { id: number; title: string; copy: string; time: string; unit: string; state: string; action: string; video?: string; course: Course };
 type Recipient = { username: string; displayName: string; wallets: Array<{ chain: Chain; address: string }> };
 type TransferReceipt = { chain: Chain; hash: string; username: string; amount: string; explorer: string };
+type FaucetChainState = { chain: Chain; amount: string; maxClaims: number; claimsUsed: number; enabled: boolean; configured: boolean; distributorAddress?: string };
+type FaucetState = {
+  role: "student" | "educator" | "owner";
+  signerReady: boolean;
+  chains: FaucetChainState[];
+  recent: Array<{ id: string; chain: Chain; amount: string; status: "queued" | "processing" | "sent" | "failed"; transactionHash?: string | null; claimedAt: string; errorMessage?: string | null }>;
+};
 
 type Drop = {
   id: number;
@@ -187,6 +194,13 @@ export default function OnchainLab() {
   const [transferError, setTransferError] = useState("");
   const [transferReceipt, setTransferReceipt] = useState<TransferReceipt | null>(null);
   const [launchMode, setLaunchMode] = useState<LaunchMode>("testnet");
+  const [faucetState, setFaucetState] = useState<FaucetState | null>(null);
+  const [faucetBusy, setFaucetBusy] = useState<Chain | "prepare" | "">("");
+  const [faucetError, setFaucetError] = useState("");
+  const [faucetDraft, setFaucetDraft] = useState<Record<Chain, { amount: string; maxClaims: number; enabled: boolean }>>({
+    ethereum: { amount: "0.002", maxClaims: 1, enabled: false },
+    solana: { amount: "0.05", maxClaims: 1, enabled: false },
+  });
 
   const ethereumWallet = ethereumWallets.find((item) => item.walletClientType === "privy") ?? ethereumWallets[0];
   const solanaWallet = solanaWallets[0];
@@ -232,6 +246,11 @@ export default function OnchainLab() {
     void refreshBalances();
   }, [authenticated, ethereumWallet?.address, solanaWallet?.address]);
 
+  useEffect(() => {
+    if (!authenticated || !identityToken || profileStatus !== "ready") return;
+    void loadFaucetState();
+  }, [authenticated, identityToken, profileStatus]);
+
   function notify(message: string) {
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
@@ -254,6 +273,92 @@ export default function OnchainLab() {
       const copied = document.execCommand("copy");
       field.remove();
       notify(copied ? `${chainName} address copied` : `Could not copy the ${chainName} address`);
+    }
+  }
+
+  async function loadFaucetState() {
+    if (!identityToken) return;
+    try {
+      const response = await fetch("/api/faucet", { headers: { "privy-id-token": identityToken } });
+      const result = await response.json() as FaucetState & { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Campus Faucet is unavailable");
+      setFaucetState(result);
+      setFaucetDraft(Object.fromEntries(result.chains.map((item) => [item.chain, {
+        amount: item.amount,
+        maxClaims: item.maxClaims,
+        enabled: item.enabled,
+      }])) as Record<Chain, { amount: string; maxClaims: number; enabled: boolean }>);
+      setFaucetError("");
+    } catch (error) {
+      setFaucetError(error instanceof Error ? error.message : "Campus Faucet is unavailable");
+    }
+  }
+
+  async function claimCampusFaucet(chain: Chain = activeChain) {
+    if (!identityToken) return notify("Sign in to claim classroom test funds");
+    setActiveChain(chain);
+    setFaucetBusy(chain);
+    setFaucetError("");
+    try {
+      const response = await fetch("/api/faucet", {
+        method: "POST",
+        headers: { "content-type": "application/json", "privy-id-token": identityToken },
+        body: JSON.stringify({ chain }),
+      });
+      const result = await response.json() as { ok?: boolean; amount?: string; error?: string };
+      if (!response.ok || !result.ok) throw new Error(result.error ?? "Test funds could not be sent");
+      notify(`${result.amount} ${chain === "ethereum" ? "Sepolia ETH" : "Devnet SOL"} sent to your wallet`);
+      await loadFaucetState();
+      window.setTimeout(() => void refreshBalances(), 1800);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Test funds could not be sent";
+      setFaucetError(message);
+      notify(message);
+      await loadFaucetState();
+    } finally {
+      setFaucetBusy("");
+    }
+  }
+
+  async function prepareFaucetWallets() {
+    if (!identityToken) return;
+    setFaucetBusy("prepare");
+    setFaucetError("");
+    try {
+      const response = await fetch("/api/faucet/admin", {
+        method: "POST",
+        headers: { "content-type": "application/json", "privy-id-token": identityToken },
+        body: JSON.stringify({ action: "prepare" }),
+      });
+      const result = await response.json() as { ok?: boolean; error?: string };
+      if (!response.ok || !result.ok) throw new Error(result.error ?? "Distributor wallets could not be prepared");
+      notify("Both Campus Faucet wallets are ready to fund");
+      await loadFaucetState();
+    } catch (error) {
+      setFaucetError(error instanceof Error ? error.message : "Distributor wallets could not be prepared");
+    } finally {
+      setFaucetBusy("");
+    }
+  }
+
+  async function saveFaucetConfig(chain: Chain) {
+    if (!identityToken) return;
+    setFaucetBusy(chain);
+    setFaucetError("");
+    try {
+      const response = await fetch("/api/faucet/admin", {
+        method: "POST",
+        headers: { "content-type": "application/json", "privy-id-token": identityToken },
+        body: JSON.stringify({ action: "update", chain, ...faucetDraft[chain] }),
+      });
+      const result = await response.json() as { ok?: boolean; error?: string };
+      if (!response.ok || !result.ok) throw new Error(result.error ?? "Faucet settings could not be saved");
+      notify(`${chain === "ethereum" ? "Sepolia" : "Solana Devnet"} faucet settings saved`);
+      await loadFaucetState();
+    } catch (error) {
+      setFaucetError(error instanceof Error ? error.message : "Faucet settings could not be saved");
+    } finally {
+      setFaucetBusy("");
     }
   }
 
@@ -426,12 +531,6 @@ export default function OnchainLab() {
     setTransferStatus("idle");
   }
 
-  function claimFaucet() {
-    const url = activeChain === "ethereum" ? "https://cloud.google.com/application/web3/faucet/ethereum/sepolia" : "https://faucet.solana.com";
-    window.open(url, "_blank", "noopener,noreferrer");
-    notify(`Official ${activeChain === "ethereum" ? "Sepolia" : "Solana Devnet"} faucet opened`);
-  }
-
   function claimHead() {
     if (headClaimed) return notify("Your Faceless head is already in your wallet");
     setHeadClaimed(true);
@@ -499,7 +598,7 @@ export default function OnchainLab() {
         </button>
 
         <nav className="main-nav" aria-label="Primary navigation">
-          {navItems.map((item) => (
+          {navItems.filter((item) => item.id !== "admin" || faucetState?.role === "owner").map((item) => (
             <button key={item.id} className={active === item.id ? "nav-item active" : "nav-item"} onClick={() => setActive(item.id)}>
               <span className="nav-mark">{item.mark}</span>{item.label}
             </button>
@@ -563,7 +662,7 @@ export default function OnchainLab() {
               <section className="wallet-card card">
                 <div className="section-head"><span><b>CLASSROOM WALLET</b><small>{wallet}</small></span><button onClick={() => copyWalletAddress(activeChain)}>Copy</button></div>
                 <div className="balance"><small>{activeChain === "ethereum" ? "SEPOLIA BALANCE" : "SOLANA DEVNET BALANCE"}</small><strong>{activeChain === "ethereum" ? balance.toFixed(3) : solBalance.toFixed(2)} <span>{activeChain === "ethereum" ? "ETH" : "SOL"}</span></strong><em>Testnet only · no real value</em></div>
-                <button className={(activeChain === "ethereum" ? balance : solBalance) ? "secondary claimed" : "secondary"} onClick={claimFaucet}>{(activeChain === "ethereum" ? balance : solBalance) ? "Faucet claimed ✓" : `Claim test ${activeChain === "ethereum" ? "ETH" : "SOL"}`}</button>
+                <button className={(activeChain === "ethereum" ? balance : solBalance) ? "secondary claimed" : "secondary"} onClick={() => claimCampusFaucet(activeChain)} disabled={Boolean(faucetBusy)}>{faucetBusy === activeChain ? "Sending test funds…" : `Claim test ${activeChain === "ethereum" ? "ETH" : "SOL"}`}</button>
               </section>
 
               <section className="quest-card card">
@@ -645,7 +744,7 @@ export default function OnchainLab() {
             <div className="page-stack">
               <section className="wallet-hero">
                 <div><span className="eyebrow">YOUR MULTICHAIN CLASSROOM IDENTITY</span><h2>{wallet}</h2><p>{authenticated ? "Your Privy wallets are ready for supervised Ethereum and Solana practice." : "Demo identity · sign in with Google to create your real classroom wallets."}</p></div>
-                <div className="wallet-balance"><small>{activeChain === "ethereum" ? "SEPOLIA BALANCE" : "SOLANA DEVNET BALANCE"}</small><strong>{activeChain === "ethereum" ? `${balance.toFixed(4)} ETH` : `${solBalance.toFixed(3)} SOL`}</strong><button onClick={claimFaucet}>Open testnet faucet ↗</button></div>
+                <div className="wallet-balance"><small>{activeChain === "ethereum" ? "SEPOLIA BALANCE" : "SOLANA DEVNET BALANCE"}</small><strong>{activeChain === "ethereum" ? `${balance.toFixed(4)} ETH` : `${solBalance.toFixed(3)} SOL`}</strong><button onClick={() => claimCampusFaucet(activeChain)}>Claim from Campus Faucet ↓</button></div>
               </section>
               <div className="dual-wallets"><button className={activeChain === "ethereum" ? "active" : ""} onClick={() => resetTransferForChain("ethereum")}><span className="chain-coin eth">Ξ</span><span><small>ETHEREUM CLASSROOM WALLET</small><b>{ethWallet}</b><em>{balance.toFixed(4)} test ETH · Sepolia</em></span><strong>Open →</strong></button><button className={activeChain === "solana" ? "active" : ""} onClick={() => resetTransferForChain("solana")}><span className="chain-coin sol">S</span><span><small>SOLANA CLASSROOM WALLET</small><b>{solWallet}</b><em>{solBalance.toFixed(3)} test SOL · Devnet</em></span><strong>Open →</strong></button></div>
               <section className="wallet-addresses card" aria-label="Full classroom wallet addresses">
@@ -659,6 +758,28 @@ export default function OnchainLab() {
                   <span className="chain-coin sol">S</span>
                   <span><small>SOLANA · DEVNET</small><code>{solWalletAddress}</code></span>
                   <button onClick={() => copyWalletAddress("solana")}>Copy SOL address</button>
+                </div>
+              </section>
+              <section className="campus-faucet card">
+                <div className="faucet-intro">
+                  <span className="eyebrow">FACELESS CAMPUS FAUCET</span>
+                  <h3>Test funds without the Wi-Fi queue.</h3>
+                  <p>Claims are tied to your verified Campus account, not the shared college internet connection.</p>
+                  <span className="faucet-safe"><i /> Testnet only · no real monetary value</span>
+                </div>
+                <div className="faucet-options">
+                  {(["ethereum", "solana"] as const).map((chain) => {
+                    const config = faucetState?.chains.find((item) => item.chain === chain);
+                    const remaining = Math.max(0, (config?.maxClaims ?? 1) - (config?.claimsUsed ?? 0));
+                    const ready = Boolean(config?.enabled && config.configured && faucetState?.signerReady);
+                    return <article key={chain}>
+                      <div className="faucet-chain"><span className={`chain-coin ${chain === "ethereum" ? "eth" : "sol"}`}>{chain === "ethereum" ? "Ξ" : "S"}</span><span><small>{chain === "ethereum" ? "ETHEREUM · SEPOLIA" : "SOLANA · DEVNET"}</small><b>{config?.amount ?? (chain === "ethereum" ? "0.002" : "0.05")} {chain === "ethereum" ? "ETH" : "SOL"}</b></span></div>
+                      <div className="faucet-availability"><span>{remaining} of {config?.maxClaims ?? 1} claims left</span><i><b style={{ width: `${((config?.claimsUsed ?? 0) / Math.max(1, config?.maxClaims ?? 1)) * 100}%` }} /></i></div>
+                      <button disabled={!ready || remaining === 0 || Boolean(faucetBusy)} onClick={() => claimCampusFaucet(chain)}>{faucetBusy === chain ? "Sending…" : remaining === 0 ? "Claim limit reached ✓" : ready ? `Claim test ${chain === "ethereum" ? "ETH" : "SOL"}` : "Opening soon"}</button>
+                    </article>;
+                  })}
+                  {faucetError && <div className="faucet-message">{faucetError}</div>}
+                  {faucetState?.recent[0] && <div className={`faucet-recent ${faucetState.recent[0].status}`}><span>{faucetState.recent[0].status === "sent" ? "✓" : faucetState.recent[0].status === "failed" ? "!" : "…"}</span><div><small>LATEST CLAIM</small><b>{faucetState.recent[0].amount} {faucetState.recent[0].chain === "ethereum" ? "Sepolia ETH" : "Devnet SOL"} · {faucetState.recent[0].status}</b></div>{faucetState.recent[0].transactionHash && <a href={faucetState.recent[0].chain === "ethereum" ? `https://sepolia.etherscan.io/tx/${faucetState.recent[0].transactionHash}` : `https://explorer.solana.com/tx/${faucetState.recent[0].transactionHash}?cluster=devnet`} target="_blank" rel="noreferrer">View receipt ↗</a>}</div>}
                 </div>
               </section>
               {authenticated && <section className="transfer-lab card">
@@ -782,6 +903,24 @@ export default function OnchainLab() {
           {active === "admin" && (
             <div className="page-stack">
               <section className="admin-banner"><div><span className="eyebrow">EDUCATOR CONTROL ROOM</span><h2>Faceless Campus Cohort 04</h2><p>Lessons, Ethereum and Solana activity, games, projects and creator campaigns in one private view.</p></div><button onClick={() => notify("Class report prepared for review")}>Generate class report</button></section>
+              <section className="faucet-admin card">
+                <div className="faucet-admin-head"><div><span className="eyebrow">CAMPUS FAUCET CONTROL</span><h3>Fund once. Let verified students claim.</h3><p>The distributor wallets are testnet-only and managed by Privy. Campus OS stores no wallet private keys.</p></div><button onClick={prepareFaucetWallets} disabled={faucetBusy === "prepare" || faucetState?.chains.every((item) => item.configured)}>{faucetBusy === "prepare" ? "Preparing…" : faucetState?.chains.every((item) => item.configured) ? "Wallets prepared ✓" : "Prepare both wallets"}</button></div>
+                <div className="faucet-admin-grid">
+                  {(["ethereum", "solana"] as const).map((chain) => {
+                    const config = faucetState?.chains.find((item) => item.chain === chain);
+                    const draft = faucetDraft[chain];
+                    return <article key={chain}>
+                      <div className="faucet-chain"><span className={`chain-coin ${chain === "ethereum" ? "eth" : "sol"}`}>{chain === "ethereum" ? "Ξ" : "S"}</span><span><small>{chain === "ethereum" ? "SEPOLIA DISTRIBUTOR" : "SOLANA DEVNET DISTRIBUTOR"}</small><b>{config?.distributorAddress ? shortenAddress(config.distributorAddress) : "Not prepared"}</b></span>{config?.distributorAddress && <button className="mini-copy" onClick={() => navigator.clipboard.writeText(config.distributorAddress || "").then(() => notify("Distributor address copied"))}>Copy</button>}</div>
+                      <label>Amount per claim<input inputMode="decimal" value={draft.amount} onChange={(event) => setFaucetDraft((current) => ({ ...current, [chain]: { ...current[chain], amount: event.target.value } }))} /></label>
+                      <label>Claims per student<select value={draft.maxClaims} onChange={(event) => setFaucetDraft((current) => ({ ...current, [chain]: { ...current[chain], maxClaims: Number(event.target.value) } }))}><option value={1}>1 claim</option><option value={2}>2 claims</option><option value={3}>3 claims</option></select></label>
+                      <label className="faucet-toggle"><input aria-label={`Open ${chain === "ethereum" ? "Sepolia" : "Solana Devnet"} student claims`} type="checkbox" checked={draft.enabled} onChange={(event) => setFaucetDraft((current) => ({ ...current, [chain]: { ...current[chain], enabled: event.target.checked } }))} /><span><b>Open student claims</b><small>Only enable after loading test funds.</small></span></label>
+                      <button className="save-faucet" disabled={!config?.configured || faucetBusy === chain} onClick={() => saveFaucetConfig(chain)}>{faucetBusy === chain ? "Saving…" : "Save settings"}</button>
+                    </article>;
+                  })}
+                </div>
+                {faucetError && <div className="faucet-message admin">{faucetError}</div>}
+                {!faucetState?.signerReady && <small className="activation-note">One secure activation step remains before distributor wallets can be prepared.</small>}
+              </section>
               <div className="metric-grid"><div className="metric"><small>ENROLLED</small><strong>128</strong><span>+18 today</span></div><div className="metric"><small>WALLETS CREATED</small><strong>121</strong><span>94.5% ready</span></div><div className="metric"><small>FAUCET CLAIMS</small><strong>109</strong><span>5.45 test ETH</span></div><div className="metric"><small>QUESTS COMPLETED</small><strong>387</strong><span>3.0 per student</span></div></div>
               <section className="admin-table card"><div className="section-head"><span><b>STUDENT ACTIVITY</b><small>Private educator record · addresses are public</small></span><div><button>Filter</button><button onClick={() => notify("Wallet list prepared as a private export")}>Export</button></div></div><div className="table-row table-head"><span>Student</span><span>Wallet</span><span>Progress</span><span>Last action</span><span>Status</span></div>{[["Aanya K.", "0x71F4...9A2C", "3 / 7", "NFT claimed", "Active"],["Rohan M.", "0x44B1...18F0", "2 / 7", "ETH received", "Active"],["Meera S.", "0x9DA2...F781", "5 / 7", "Collection draft", "Review"],["Team Orbit", "0xA621...3C09", "6 / 7", "Asset listed", "Active"]].map((row) => <div className="table-row" key={row[0]}>{row.map((cell, i) => <span key={cell} data-label={["Student","Wallet","Progress","Last action","Status"][i]} className={i === 4 ? `status ${cell.toLowerCase()}` : ""}>{cell}</span>)}</div>)}</section>
             </div>

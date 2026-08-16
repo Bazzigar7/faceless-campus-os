@@ -1,0 +1,129 @@
+import {
+  address,
+  appendTransactionMessageInstructions,
+  compileTransaction,
+  createNoopSigner,
+  createSolanaRpc,
+  createTransactionMessage,
+  getTransactionEncoder,
+  pipe,
+  setTransactionMessageFeePayer,
+  setTransactionMessageLifetimeUsingBlockhash,
+} from "@solana/kit";
+import { getTransferSolInstruction } from "@solana-program/system";
+import type { CampusChain } from "./wallet-provider";
+
+type PrivyWallet = { id: string; address: string; chain_type: CampusChain };
+type PrivyRpcResponse = { data?: { hash?: string }; error?: { message?: string } };
+
+function credentials() {
+  const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID;
+  const appSecret = process.env.PRIVY_APP_SECRET;
+  if (!appId || !appSecret) throw new Error("Secure faucet signing is not activated yet");
+  return { appId, authorization: `Basic ${btoa(`${appId}:${appSecret}`)}` };
+}
+
+function headers(referenceId?: string) {
+  const { appId, authorization } = credentials();
+  return {
+    Authorization: authorization,
+    "Content-Type": "application/json",
+    "privy-app-id": appId,
+    ...(referenceId ? { "privy-idempotency-key": referenceId } : {}),
+  };
+}
+
+async function readPrivyResponse<T>(response: Response): Promise<T> {
+  const data = await response.json().catch(() => null) as (T & { error?: { message?: string }; message?: string }) | null;
+  if (!response.ok || !data) {
+    throw new Error(data?.error?.message ?? data?.message ?? `Privy wallet request failed (${response.status})`);
+  }
+  return data;
+}
+
+export function isPrivyServerWalletReady() {
+  return Boolean(process.env.NEXT_PUBLIC_PRIVY_APP_ID && process.env.PRIVY_APP_SECRET);
+}
+
+export async function createDistributorWallet(chain: CampusChain): Promise<PrivyWallet> {
+  const response = await fetch("https://api.privy.io/v1/wallets", {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ chain_type: chain }),
+  });
+  return readPrivyResponse<PrivyWallet>(response);
+}
+
+function decimalToBaseUnits(value: string, decimals: number) {
+  if (!/^\d+(\.\d+)?$/.test(value)) throw new Error("Invalid faucet amount");
+  const [whole, fraction = ""] = value.split(".");
+  if (fraction.length > decimals) throw new Error("Faucet amount has too many decimal places");
+  return BigInt(whole) * (BigInt(10) ** BigInt(decimals)) + BigInt((fraction + "0".repeat(decimals)).slice(0, decimals));
+}
+
+async function sendEthereum(walletId: string, destination: string, amount: string, claimId: string) {
+  const value = decimalToBaseUnits(amount, 18);
+  const response = await fetch(`https://api.privy.io/v1/wallets/${encodeURIComponent(walletId)}/rpc`, {
+    method: "POST",
+    headers: headers(claimId),
+    body: JSON.stringify({
+      method: "eth_sendTransaction",
+      caip2: "eip155:11155111",
+      chain_type: "ethereum",
+      reference_id: claimId,
+      params: { transaction: { to: destination, value: `0x${value.toString(16)}` } },
+    }),
+  });
+  const result = await readPrivyResponse<PrivyRpcResponse>(response);
+  if (!result.data?.hash) throw new Error("Sepolia transaction did not return a hash");
+  return result.data.hash;
+}
+
+async function sendSolana(walletId: string, distributorAddress: string, destination: string, amount: string, claimId: string) {
+  const lamports = decimalToBaseUnits(amount, 9);
+  const rpc = createSolanaRpc(process.env.SOLANA_DEVNET_RPC_URL || "https://api.devnet.solana.com");
+  const { value: latestBlockhash } = await rpc.getLatestBlockhash().send();
+  const instruction = getTransferSolInstruction({
+    amount: lamports,
+    destination: address(destination),
+    source: createNoopSigner(address(distributorAddress)),
+  });
+  const transaction = pipe(
+    createTransactionMessage({ version: 0 }),
+    (tx) => setTransactionMessageFeePayer(address(distributorAddress), tx),
+    (tx) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, tx),
+    (tx) => appendTransactionMessageInstructions([instruction], tx),
+    (tx) => compileTransaction(tx),
+    (tx) => new Uint8Array(getTransactionEncoder().encode(tx)),
+  );
+  let binary = "";
+  for (const byte of transaction) binary += String.fromCharCode(byte);
+
+  const response = await fetch(`https://api.privy.io/v1/wallets/${encodeURIComponent(walletId)}/rpc`, {
+    method: "POST",
+    headers: headers(claimId),
+    body: JSON.stringify({
+      method: "signAndSendTransaction",
+      caip2: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+      reference_id: claimId,
+      params: { transaction: btoa(binary), encoding: "base64" },
+    }),
+  });
+  const result = await readPrivyResponse<PrivyRpcResponse>(response);
+  if (!result.data?.hash) throw new Error("Solana Devnet transaction did not return a hash");
+  return result.data.hash;
+}
+
+export async function sendFaucetTransfer(input: {
+  chain: CampusChain;
+  walletId: string;
+  distributorAddress: string;
+  destination: string;
+  amount: string;
+  claimId: string;
+}) {
+  if (input.chain === "ethereum") {
+    return sendEthereum(input.walletId, input.destination, input.amount, input.claimId);
+  }
+  return sendSolana(input.walletId, input.distributorAddress, input.destination, input.amount, input.claimId);
+}

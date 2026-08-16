@@ -8,6 +8,13 @@
       "when": 1786911881204,
       "tag": "0000_cheerful_puff_adder",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786920907578,
+      "tag": "0001_low_rumiko_fujikawa",
+      "breakpoints": true
     }
   ]
 }

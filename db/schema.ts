@@ -65,14 +65,30 @@ export const faucetClaims = sqliteTable("faucet_claims", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   chain: text("chain", { enum: ["ethereum", "solana"] }).notNull(),
+  claimNumber: integer("claim_number").notNull().default(1),
   amount: text("amount").notNull(),
+  walletAddress: text("wallet_address").notNull().default(""),
   transactionHash: text("transaction_hash"),
-  status: text("status", { enum: ["queued", "sent", "failed"] }).notNull().default("queued"),
+  status: text("status", { enum: ["queued", "processing", "sent", "failed"] }).notNull().default("queued"),
+  errorMessage: text("error_message"),
   claimedAt: text("claimed_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
+  uniqueIndex("idx_faucet_claims_user_chain_number").on(table.userId, table.chain, table.claimNumber),
   index("idx_faucet_claims_user_chain_time").on(table.userId, table.chain, table.claimedAt),
   index("idx_faucet_claims_status").on(table.status),
 ]);
+
+export const faucetConfigs = sqliteTable("faucet_configs", {
+  chain: text("chain", { enum: ["ethereum", "solana"] }).primaryKey(),
+  amount: text("amount").notNull(),
+  maxClaims: integer("max_claims").notNull().default(1),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+  distributorWalletId: text("distributor_wallet_id"),
+  distributorAddress: text("distributor_address"),
+  updatedBy: text("updated_by").references(() => users.id),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
 
 export const mainnetLaunchRequests = sqliteTable("mainnet_launch_requests", {
   id: text("id").primaryKey(),

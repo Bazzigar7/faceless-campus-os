@@ -38,6 +38,7 @@ type Drop = {
 
 const navItems: { id: Tab; label: string; mark: string }[] = [
   { id: "home", label: "Home", mark: "⌂" },
+  { id: "wallet", label: "Wallets", mark: "▱" },
   { id: "learn", label: "Learn", mark: "▶" },
   { id: "mask", label: "Ask Mask", mark: "M" },
   { id: "create", label: "Build lab", mark: "+" },
@@ -234,6 +235,26 @@ export default function OnchainLab() {
   function notify(message: string) {
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
+  }
+
+  async function copyWalletAddress(chain: Chain) {
+    const addressToCopy = chain === "ethereum" ? ethWalletAddress : solWalletAddress;
+    const chainName = chain === "ethereum" ? "Ethereum" : "Solana";
+
+    try {
+      await navigator.clipboard.writeText(addressToCopy);
+      notify(`${chainName} address copied`);
+    } catch {
+      const field = document.createElement("textarea");
+      field.value = addressToCopy;
+      field.style.position = "fixed";
+      field.style.opacity = "0";
+      document.body.appendChild(field);
+      field.select();
+      const copied = document.execCommand("copy");
+      field.remove();
+      notify(copied ? `${chainName} address copied` : `Could not copy the ${chainName} address`);
+    }
   }
 
   async function saveCampusProfile() {
@@ -540,7 +561,7 @@ export default function OnchainLab() {
               </section>
 
               <section className="wallet-card card">
-                <div className="section-head"><span><b>CLASSROOM WALLET</b><small>{wallet}</small></span><button onClick={() => notify("Wallet address copied")}>Copy</button></div>
+                <div className="section-head"><span><b>CLASSROOM WALLET</b><small>{wallet}</small></span><button onClick={() => copyWalletAddress(activeChain)}>Copy</button></div>
                 <div className="balance"><small>{activeChain === "ethereum" ? "SEPOLIA BALANCE" : "SOLANA DEVNET BALANCE"}</small><strong>{activeChain === "ethereum" ? balance.toFixed(3) : solBalance.toFixed(2)} <span>{activeChain === "ethereum" ? "ETH" : "SOL"}</span></strong><em>Testnet only · no real value</em></div>
                 <button className={(activeChain === "ethereum" ? balance : solBalance) ? "secondary claimed" : "secondary"} onClick={claimFaucet}>{(activeChain === "ethereum" ? balance : solBalance) ? "Faucet claimed ✓" : `Claim test ${activeChain === "ethereum" ? "ETH" : "SOL"}`}</button>
               </section>
@@ -627,6 +648,19 @@ export default function OnchainLab() {
                 <div className="wallet-balance"><small>{activeChain === "ethereum" ? "SEPOLIA BALANCE" : "SOLANA DEVNET BALANCE"}</small><strong>{activeChain === "ethereum" ? `${balance.toFixed(4)} ETH` : `${solBalance.toFixed(3)} SOL`}</strong><button onClick={claimFaucet}>Open testnet faucet ↗</button></div>
               </section>
               <div className="dual-wallets"><button className={activeChain === "ethereum" ? "active" : ""} onClick={() => resetTransferForChain("ethereum")}><span className="chain-coin eth">Ξ</span><span><small>ETHEREUM CLASSROOM WALLET</small><b>{ethWallet}</b><em>{balance.toFixed(4)} test ETH · Sepolia</em></span><strong>Open →</strong></button><button className={activeChain === "solana" ? "active" : ""} onClick={() => resetTransferForChain("solana")}><span className="chain-coin sol">S</span><span><small>SOLANA CLASSROOM WALLET</small><b>{solWallet}</b><em>{solBalance.toFixed(3)} test SOL · Devnet</em></span><strong>Open →</strong></button></div>
+              <section className="wallet-addresses card" aria-label="Full classroom wallet addresses">
+                <div className="section-head"><span><b>YOUR WALLET ADDRESSES</b><small>Use these when funding or receiving testnet assets</small></span></div>
+                <div className="wallet-address-row">
+                  <span className="chain-coin eth">Ξ</span>
+                  <span><small>ETHEREUM · SEPOLIA</small><code>{ethWalletAddress}</code></span>
+                  <button onClick={() => copyWalletAddress("ethereum")}>Copy ETH address</button>
+                </div>
+                <div className="wallet-address-row">
+                  <span className="chain-coin sol">S</span>
+                  <span><small>SOLANA · DEVNET</small><code>{solWalletAddress}</code></span>
+                  <button onClick={() => copyWalletAddress("solana")}>Copy SOL address</button>
+                </div>
+              </section>
               {authenticated && <section className="transfer-lab card">
                 <div className="transfer-intro"><span className="eyebrow">SEND BY CAMPUS USERNAME</span><h3>Your first real testnet transfer.</h3><p>Find a classmate by username, verify the resolved wallet, then approve the transaction yourself. Test assets have no real value.</p><div className="transfer-steps"><span className={recipient ? "done" : "active"}><b>1</b> Find</span><span className={recipient && transferStatus !== "sent" ? "active" : transferStatus === "sent" ? "done" : ""}><b>2</b> Review</span><span className={transferStatus === "sent" ? "done" : ""}><b>3</b> Approve</span></div></div>
                 <div className="transfer-panel">

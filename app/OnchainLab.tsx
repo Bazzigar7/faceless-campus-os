@@ -1,8 +1,22 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
-import { useIdentityToken, usePrivy, useWallets as useEthereumWallets } from "@privy-io/react-auth";
-import { useExportWallet as useExportSolanaWallet, useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
+import { useIdentityToken, usePrivy, useSendTransaction as useSendEthereumTransaction, useWallets as useEthereumWallets } from "@privy-io/react-auth";
+import { useExportWallet as useExportSolanaWallet, useSignAndSendTransaction, useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
+import {
+  address,
+  appendTransactionMessageInstructions,
+  compileTransaction,
+  createNoopSigner,
+  createSolanaRpc,
+  createTransactionMessage,
+  getBase58Decoder,
+  getTransactionEncoder,
+  pipe,
+  setTransactionMessageFeePayer,
+  setTransactionMessageLifetimeUsingBlockhash,
+} from "@solana/kit";
+import { getTransferSolInstruction } from "@solana-program/system";
 import LiveMask from "./LiveMask";
 
 type Tab = "home" | "learn" | "mask" | "wallet" | "create" | "games" | "tools" | "campaigns" | "launchpad" | "passport" | "drops" | "admin";
@@ -10,6 +24,8 @@ type Course = "blockchain" | "bitcoin" | "ethereum";
 type Chain = "ethereum" | "solana";
 type LaunchMode = "testnet" | "mainnet";
 type Lesson = { id: number; title: string; copy: string; time: string; unit: string; state: string; action: string; video?: string; course: Course };
+type Recipient = { username: string; displayName: string; wallets: Array<{ chain: Chain; address: string }> };
+type TransferReceipt = { chain: Chain; hash: string; username: string; amount: string; explorer: string };
 
 type Drop = {
   id: number;
@@ -124,11 +140,23 @@ function shortenAddress(address: string) {
   return address.length > 12 ? `${address.slice(0, 6)}...${address.slice(-4)}` : address;
 }
 
+function decimalToUnits(value: string, decimals: number): bigint {
+  const normalized = value.trim();
+  if (!/^\d+(\.\d+)?$/.test(normalized)) throw new Error("Enter a valid amount");
+  const [whole, fraction = ""] = normalized.split(".");
+  if (fraction.length > decimals) throw new Error(`Use no more than ${decimals} decimal places`);
+  return BigInt(whole) * (10n ** BigInt(decimals)) + BigInt((fraction + "0".repeat(decimals)).slice(0, decimals));
+}
+
+const solanaDevnetRpc = createSolanaRpc("https://api.devnet.solana.com");
+
 export default function OnchainLab() {
   const { ready: privyReady, authenticated, user, login, logout, linkWallet, exportWallet: exportEthereumWallet } = usePrivy();
   const { identityToken } = useIdentityToken();
   const { wallets: ethereumWallets } = useEthereumWallets();
   const { wallets: solanaWallets } = useSolanaWallets();
+  const { sendTransaction: sendEthereumTransaction } = useSendEthereumTransaction();
+  const { signAndSendTransaction: sendSolanaTransaction } = useSignAndSendTransaction();
   const { exportWallet: exportSolanaWallet } = useExportSolanaWallet();
   const [active, setActive] = useState<Tab>("home");
   const [demoMode, setDemoMode] = useState(false);
@@ -151,6 +179,12 @@ export default function OnchainLab() {
   const [campusUsername, setCampusUsername] = useState("");
   const [profileStatus, setProfileStatus] = useState<"idle" | "saving" | "ready" | "error">("idle");
   const [profileError, setProfileError] = useState("");
+  const [recipientName, setRecipientName] = useState("");
+  const [recipient, setRecipient] = useState<Recipient | null>(null);
+  const [transferAmount, setTransferAmount] = useState("");
+  const [transferStatus, setTransferStatus] = useState<"idle" | "resolving" | "ready" | "sending" | "sent" | "error">("idle");
+  const [transferError, setTransferError] = useState("");
+  const [transferReceipt, setTransferReceipt] = useState<TransferReceipt | null>(null);
   const [launchMode, setLaunchMode] = useState<LaunchMode>("testnet");
 
   const ethereumWallet = ethereumWallets.find((item) => item.walletClientType === "privy") ?? ethereumWallets[0];
@@ -191,6 +225,11 @@ export default function OnchainLab() {
     }, 2200);
     return () => window.clearTimeout(timer);
   }, [authenticated, identityToken, profileStatus]);
+
+  useEffect(() => {
+    if (!authenticated || !ethereumWallet || !solanaWallet) return;
+    void refreshBalances();
+  }, [authenticated, ethereumWallet?.address, solanaWallet?.address]);
 
   function notify(message: string) {
     setToast(message);
@@ -258,15 +297,118 @@ export default function OnchainLab() {
     }
   }
 
-  function claimFaucet() {
-    if (activeChain === "ethereum") {
-      if (balance > 0) return notify("Sepolia faucet already claimed");
-      setBalance(0.05);
-      return notify("0.05 Sepolia ETH added to your Ethereum wallet");
+  async function refreshBalances() {
+    if (ethereumWallet) {
+      try {
+        await ethereumWallet.switchChain(11155111);
+        const provider = await ethereumWallet.getEthereumProvider();
+        const result = await provider.request({ method: "eth_getBalance", params: [ethereumWallet.address, "latest"] });
+        if (typeof result === "string") setBalance(Number(BigInt(result)) / 1e18);
+      } catch {
+        // A balance refresh should never interrupt the classroom UI.
+      }
     }
-    if (solBalance > 0) return notify("Solana Devnet faucet already claimed");
-    setSolBalance(2);
-    notify("2 Devnet SOL added to your Solana wallet");
+    if (solanaWallet) {
+      try {
+        const result = await solanaDevnetRpc.getBalance(address(solanaWallet.address)).send();
+        setSolBalance(Number(result.value) / 1e9);
+      } catch {
+        // A balance refresh should never interrupt the classroom UI.
+      }
+    }
+  }
+
+  async function resolveRecipient(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const clean = recipientName.trim().toLowerCase().replace(/^@/, "");
+    if (!/^[a-z][a-z0-9_]{2,23}$/.test(clean)) {
+      setTransferStatus("error");
+      setTransferError("Enter a valid Campus username");
+      return;
+    }
+
+    setTransferStatus("resolving");
+    setTransferError("");
+    setRecipient(null);
+    setTransferReceipt(null);
+    try {
+      const response = await fetch(`/api/resolve/${encodeURIComponent(clean)}`);
+      const result = await response.json() as Recipient & { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Username not found");
+      const chainWallet = result.wallets.find((item) => item.chain === activeChain);
+      if (!chainWallet) throw new Error(`@${clean} does not have a ${activeChain === "ethereum" ? "Sepolia" : "Solana Devnet"} wallet`);
+      const ownAddress = activeChain === "ethereum" ? ethereumWallet?.address : solanaWallet?.address;
+      if (ownAddress?.toLowerCase() === chainWallet.address.toLowerCase()) throw new Error("Choose another student—you cannot send this practice transfer to yourself");
+      setRecipient(result);
+      setTransferStatus("ready");
+    } catch (error) {
+      setTransferStatus("error");
+      setTransferError(error instanceof Error ? error.message : "Username could not be resolved");
+    }
+  }
+
+  async function sendTestnetTransfer(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const destination = recipient?.wallets.find((item) => item.chain === activeChain)?.address;
+    if (!recipient || !destination) return;
+
+    setTransferStatus("sending");
+    setTransferError("");
+    try {
+      if (activeChain === "ethereum") {
+        if (!ethereumWallet) throw new Error("Ethereum wallet is unavailable");
+        const value = decimalToUnits(transferAmount, 18);
+        if (value <= 0n || value > 50_000_000_000_000_000n) throw new Error("Send between 0 and 0.05 test ETH");
+        await ethereumWallet.switchChain(11155111);
+        const { hash } = await sendEthereumTransaction(
+          { to: destination, value, chainId: 11155111 },
+          { address: ethereumWallet.address, uiOptions: { showWalletUIs: true } },
+        );
+        setTransferReceipt({ chain: "ethereum", hash, username: recipient.username, amount: transferAmount, explorer: `https://sepolia.etherscan.io/tx/${hash}` });
+      } else {
+        if (!solanaWallet) throw new Error("Solana wallet is unavailable");
+        const lamports = decimalToUnits(transferAmount, 9);
+        if (lamports <= 0n || lamports > 1_000_000_000n) throw new Error("Send between 0 and 1 test SOL");
+        const { value: latestBlockhash } = await solanaDevnetRpc.getLatestBlockhash().send();
+        const instruction = getTransferSolInstruction({
+          amount: lamports,
+          destination: address(destination),
+          source: createNoopSigner(address(solanaWallet.address)),
+        });
+        const transaction = pipe(
+          createTransactionMessage({ version: 0 }),
+          (tx) => setTransactionMessageFeePayer(address(solanaWallet.address), tx),
+          (tx) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, tx),
+          (tx) => appendTransactionMessageInstructions([instruction], tx),
+          (tx) => compileTransaction(tx),
+          (tx) => new Uint8Array(getTransactionEncoder().encode(tx)),
+        );
+        const { signature } = await sendSolanaTransaction({ transaction, wallet: solanaWallet, chain: "solana:devnet" });
+        const hash = getBase58Decoder().decode(signature);
+        setTransferReceipt({ chain: "solana", hash, username: recipient.username, amount: transferAmount, explorer: `https://explorer.solana.com/tx/${hash}?cluster=devnet` });
+      }
+      setTransferStatus("sent");
+      notify(`Testnet transfer sent to ${recipient.username}`);
+      window.setTimeout(() => void refreshBalances(), 1800);
+    } catch (error) {
+      setTransferStatus("error");
+      setTransferError(error instanceof Error ? error.message : "Transaction was not sent");
+    }
+  }
+
+  function resetTransferForChain(chain: Chain) {
+    setActiveChain(chain);
+    setRecipient(null);
+    setTransferAmount("");
+    setTransferError("");
+    setTransferReceipt(null);
+    setTransferStatus("idle");
+  }
+
+  function claimFaucet() {
+    const url = activeChain === "ethereum" ? "https://cloud.google.com/application/web3/faucet/ethereum/sepolia" : "https://faucet.solana.com";
+    window.open(url, "_blank", "noopener,noreferrer");
+    notify(`Official ${activeChain === "ethereum" ? "Sepolia" : "Solana Devnet"} faucet opened`);
   }
 
   function claimHead() {
@@ -482,9 +624,19 @@ export default function OnchainLab() {
             <div className="page-stack">
               <section className="wallet-hero">
                 <div><span className="eyebrow">YOUR MULTICHAIN CLASSROOM IDENTITY</span><h2>{wallet}</h2><p>{authenticated ? "Your Privy wallets are ready for supervised Ethereum and Solana practice." : "Demo identity · sign in with Google to create your real classroom wallets."}</p></div>
-                <div className="wallet-balance"><small>{activeChain === "ethereum" ? "SEPOLIA BALANCE" : "SOLANA DEVNET BALANCE"}</small><strong>{activeChain === "ethereum" ? `${balance.toFixed(3)} ETH` : `${solBalance.toFixed(2)} SOL`}</strong><button onClick={claimFaucet}>{activeChain === "ethereum" ? (balance ? "Claimed" : "Claim ETH faucet") : (solBalance ? "Claimed" : "Claim SOL faucet")}</button></div>
+                <div className="wallet-balance"><small>{activeChain === "ethereum" ? "SEPOLIA BALANCE" : "SOLANA DEVNET BALANCE"}</small><strong>{activeChain === "ethereum" ? `${balance.toFixed(4)} ETH` : `${solBalance.toFixed(3)} SOL`}</strong><button onClick={claimFaucet}>Open testnet faucet ↗</button></div>
               </section>
-              <div className="dual-wallets"><button className={activeChain === "ethereum" ? "active" : ""} onClick={() => setActiveChain("ethereum")}><span className="chain-coin eth">Ξ</span><span><small>ETHEREUM CLASSROOM WALLET</small><b>{ethWallet}</b><em>{balance.toFixed(3)} test ETH · Sepolia</em></span><strong>Open →</strong></button><button className={activeChain === "solana" ? "active" : ""} onClick={() => setActiveChain("solana")}><span className="chain-coin sol">S</span><span><small>SOLANA CLASSROOM WALLET</small><b>{solWallet}</b><em>{solBalance.toFixed(2)} test SOL · Devnet</em></span><strong>Open →</strong></button></div>
+              <div className="dual-wallets"><button className={activeChain === "ethereum" ? "active" : ""} onClick={() => resetTransferForChain("ethereum")}><span className="chain-coin eth">Ξ</span><span><small>ETHEREUM CLASSROOM WALLET</small><b>{ethWallet}</b><em>{balance.toFixed(4)} test ETH · Sepolia</em></span><strong>Open →</strong></button><button className={activeChain === "solana" ? "active" : ""} onClick={() => resetTransferForChain("solana")}><span className="chain-coin sol">S</span><span><small>SOLANA CLASSROOM WALLET</small><b>{solWallet}</b><em>{solBalance.toFixed(3)} test SOL · Devnet</em></span><strong>Open →</strong></button></div>
+              {authenticated && <section className="transfer-lab card">
+                <div className="transfer-intro"><span className="eyebrow">SEND BY CAMPUS USERNAME</span><h3>Your first real testnet transfer.</h3><p>Find a classmate by username, verify the resolved wallet, then approve the transaction yourself. Test assets have no real value.</p><div className="transfer-steps"><span className={recipient ? "done" : "active"}><b>1</b> Find</span><span className={recipient && transferStatus !== "sent" ? "active" : transferStatus === "sent" ? "done" : ""}><b>2</b> Review</span><span className={transferStatus === "sent" ? "done" : ""}><b>3</b> Approve</span></div></div>
+                <div className="transfer-panel">
+                  <div className="transfer-network"><span className={`chain-coin ${activeChain === "ethereum" ? "eth" : "sol"}`}>{activeChain === "ethereum" ? "Ξ" : "S"}</span><span><small>SENDING ON</small><b>{activeChain === "ethereum" ? "Ethereum Sepolia" : "Solana Devnet"}</b></span><em>TESTNET</em></div>
+                  <form className="recipient-search" onSubmit={resolveRecipient}><label htmlFor="recipient-name">Recipient username</label><div><span>@</span><input id="recipient-name" value={recipientName} onChange={(event) => { setRecipientName(event.target.value); setRecipient(null); setTransferReceipt(null); setTransferStatus("idle"); setTransferError(""); }} placeholder="classmate" autoComplete="off" /><button disabled={transferStatus === "resolving"}>{transferStatus === "resolving" ? "Finding…" : "Find wallet"}</button></div></form>
+                  {recipient && <form className="transfer-review" onSubmit={sendTestnetTransfer}><div className="resolved-person"><span>✓</span><div><small>VERIFIED CAMPUS RECIPIENT</small><b>{recipient.username} · {recipient.displayName}</b><code>{shortenAddress(recipient.wallets.find((item) => item.chain === activeChain)?.address ?? "")}</code></div><button type="button" onClick={() => { setRecipient(null); setTransferStatus("idle"); }}>Change</button></div><label htmlFor="transfer-amount">Amount in test {activeChain === "ethereum" ? "ETH" : "SOL"}</label><div className="amount-row"><input id="transfer-amount" inputMode="decimal" value={transferAmount} onChange={(event) => { setTransferAmount(event.target.value); setTransferError(""); }} placeholder={activeChain === "ethereum" ? "0.001" : "0.01"} /><span>{activeChain === "ethereum" ? "ETH" : "SOL"}</span><button disabled={transferStatus === "sending" || !transferAmount}>{transferStatus === "sending" ? "Waiting for approval…" : `Review & send →`}</button></div><small className="transfer-limit">Classroom limit: 0.05 test ETH or 1 test SOL per transfer. Privy shows the final confirmation.</small></form>}
+                  {transferError && <div className="transfer-message error">{transferError}</div>}
+                  {transferReceipt && <div className="transfer-message success"><span>✓</span><div><b>Transfer submitted to {transferReceipt.username}</b><small>{transferReceipt.amount} {transferReceipt.chain === "ethereum" ? "test ETH" : "test SOL"}</small></div><a href={transferReceipt.explorer} target="_blank" rel="noreferrer">View transaction ↗</a></div>}
+                </div>
+              </section>}
               {authenticated && <section className="wallet-control card"><div><span className="eyebrow">YOU CONTROL YOUR WALLETS</span><h3>Connect or export whenever you need.</h3><p>Faceless never receives or stores your private keys. Export opens Privy’s protected wallet screen.</p></div><div><button onClick={() => linkWallet({ walletChainType: "ethereum-and-solana" })}>Connect MetaMask or Phantom</button><button disabled={!ethereumWallet} onClick={() => exportWallet("ethereum")}>Export Ethereum</button><button disabled={!solanaWallet} onClick={() => exportWallet("solana")}>Export Solana</button></div></section>}
               <div className="asset-layout">
                 <section className="card asset-section"><div className="section-head"><span><b>COLLECTIBLES</b><small>2 classroom assets</small></span></div><div className="asset-grid"><div className="asset-tile"><img src="/faceless-purple.png" alt="Purple Faceless classroom head" /><span><b>Ethereum Lab Pass</b><small>ERC-1155 · Testnet</small></span></div>{headClaimed ? <div className="asset-tile"><img src="/faceless-blue.png" alt="Blue Faceless classroom head" /><span><b>Faceless Head #084</b><small>Claimed today</small></span></div> : <button className="asset-empty" onClick={claimHead}>+ Claim your Faceless head</button>}</div></section>

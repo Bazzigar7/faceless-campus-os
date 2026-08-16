@@ -43,5 +43,10 @@ test("profile registration verifies signed Privy identity data", async () => {
   assert.match(verifier, /linked_accounts/);
   assert.match(client, /useIdentityToken/);
   assert.match(client, /campus_pending_username/);
+  assert.match(client, /useSendEthereumTransaction/);
+  assert.match(client, /useSignAndSendTransaction/);
+  assert.match(client, /api\/resolve/);
+  assert.match(client, /solana:devnet/);
+  assert.match(client, /chainId:\s*11155111/);
   assert.doesNotMatch(environment, /PRIVY_APP_SECRET/);
 });

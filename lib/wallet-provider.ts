@@ -22,7 +22,7 @@ export interface WalletIdentityProvider {
 export const walletProviderEnvironment = {
   activeProvider: "privy" as WalletProviderName,
   requiredPublicKeys: ["NEXT_PUBLIC_PRIVY_APP_ID"],
-  requiredServerKeys: ["PRIVY_APP_SECRET", "PRIVY_VERIFICATION_KEY"],
+  requiredServerKeys: ["PRIVY_VERIFICATION_KEY"],
 };
 
 export function normalizeUsername(value: string): string {
@@ -32,4 +32,3 @@ export function normalizeUsername(value: string): string {
 export function isValidUsername(value: string): boolean {
   return /^[a-z][a-z0-9_]{2,23}$/.test(normalizeUsername(value));
 }
-

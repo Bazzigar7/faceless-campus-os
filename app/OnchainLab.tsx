@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
-import { usePrivy, useWallets as useEthereumWallets } from "@privy-io/react-auth";
+import { useIdentityToken, usePrivy, useWallets as useEthereumWallets } from "@privy-io/react-auth";
 import { useExportWallet as useExportSolanaWallet, useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
 import LiveMask from "./LiveMask";
 
@@ -126,6 +126,7 @@ function shortenAddress(address: string) {
 
 export default function OnchainLab() {
   const { ready: privyReady, authenticated, user, login, logout, linkWallet, exportWallet: exportEthereumWallet } = usePrivy();
+  const { identityToken } = useIdentityToken();
   const { wallets: ethereumWallets } = useEthereumWallets();
   const { wallets: solanaWallets } = useSolanaWallets();
   const { exportWallet: exportSolanaWallet } = useExportSolanaWallet();
@@ -147,6 +148,9 @@ export default function OnchainLab() {
   const [maskAnswer, setMaskAnswer] = useState("Ask me anything about the lesson. I’ll use the approved Faceless material and point you to the next activity.");
   const [claimedCampaigns, setClaimedCampaigns] = useState<number[]>([]);
   const [username, setUsername] = useState("aanya");
+  const [campusUsername, setCampusUsername] = useState("");
+  const [profileStatus, setProfileStatus] = useState<"idle" | "saving" | "ready" | "error">("idle");
+  const [profileError, setProfileError] = useState("");
   const [launchMode, setLaunchMode] = useState<LaunchMode>("testnet");
 
   const ethereumWallet = ethereumWallets.find((item) => item.walletClientType === "privy") ?? ethereumWallets[0];
@@ -159,7 +163,7 @@ export default function OnchainLab() {
   const displayName = user?.google?.name ?? user?.google?.email?.split("@")[0] ?? "Aanya K.";
   const displayEmail = user?.google?.email ?? "Student · Cohort 04";
   const initials = displayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
-  const onboarded = authenticated || demoMode;
+  const onboarded = demoMode || (authenticated && profileStatus === "ready");
   const completed = 2 + (headClaimed ? 1 : 0);
   const progress = Math.round((completed / 7) * 100);
 
@@ -169,16 +173,77 @@ export default function OnchainLab() {
     if (authenticated) setLoading(false);
   }, [authenticated]);
 
+  useEffect(() => {
+    const pending = window.sessionStorage.getItem("campus_pending_username");
+    if (pending) setUsername(pending);
+  }, []);
+
+  useEffect(() => {
+    if (!authenticated || !identityToken || !ethereumWallet || !solanaWallet || profileStatus !== "idle") return;
+    void saveCampusProfile();
+  }, [authenticated, identityToken, ethereumWallet?.address, solanaWallet?.address, profileStatus]);
+
+  useEffect(() => {
+    if (!authenticated || identityToken || profileStatus !== "idle") return;
+    const timer = window.setTimeout(() => {
+      setProfileStatus("error");
+      setProfileError("Identity tokens need to be enabled once in Privy before we can secure your username.");
+    }, 2200);
+    return () => window.clearTimeout(timer);
+  }, [authenticated, identityToken, profileStatus]);
+
   function notify(message: string) {
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
   }
 
+  async function saveCampusProfile() {
+    const cleanUsername = username.trim().toLowerCase().replace(/^@/, "");
+    if (!/^[a-z][a-z0-9_]{2,23}$/.test(cleanUsername)) {
+      setProfileStatus("error");
+      setProfileError("Choose 3–24 letters, numbers or underscores, starting with a letter.");
+      return;
+    }
+    if (!identityToken) {
+      setProfileStatus("error");
+      setProfileError("Identity tokens need to be enabled once in Privy before we can secure your username.");
+      return;
+    }
+
+    setProfileStatus("saving");
+    setProfileError("");
+    try {
+      const response = await fetch("/api/profile", {
+        method: "POST",
+        headers: { "content-type": "application/json", "privy-id-token": identityToken },
+        body: JSON.stringify({ username: cleanUsername }),
+      });
+      const result = await response.json() as { username?: string; error?: string };
+      if (!response.ok || !result.username) throw new Error(result.error ?? "Campus profile could not be saved");
+      const savedUsername = result.username.replace(/^@/, "");
+      setUsername(savedUsername);
+      setCampusUsername(savedUsername);
+      setProfileStatus("ready");
+      window.sessionStorage.removeItem("campus_pending_username");
+      notify(`@${savedUsername} now points to both classroom wallets`);
+    } catch (error) {
+      setProfileStatus("error");
+      setProfileError(error instanceof Error ? error.message : "Campus profile could not be saved");
+    }
+  }
+
   function enterLab() {
     const cleanUsername = username.trim().toLowerCase().replace(/^@/, "");
     if (!/^[a-z][a-z0-9_]{2,23}$/.test(cleanUsername)) {
-      return notify("Choose 3–24 letters, numbers or underscores, starting with a letter");
+      setProfileError("Choose 3–24 letters, numbers or underscores, starting with a letter.");
+      return;
     }
+    if (authenticated) {
+      setProfileStatus("idle");
+      setProfileError("");
+      return;
+    }
+    window.sessionStorage.setItem("campus_pending_username", cleanUsername);
     setLoading(true);
     login({ loginMethods: ["google"] });
     window.setTimeout(() => setLoading(false), 2500);
@@ -506,7 +571,7 @@ export default function OnchainLab() {
             <div className="page-stack">
               <section className="passport-hero">
                 <div className="passport-identity"><span className="profile-dot large">{initials}</span><div><span className="eyebrow">FACELESS STUDENT PASSPORT</span><h2>{displayName}</h2><p>Creator · Builder · Cohort 04</p></div></div>
-                <div className="passport-wallet"><small>MULTICHAIN CLASSROOM IDENTITY</small><strong>{ethWallet}</strong><strong>{solWallet}</strong><span><i /> Sepolia + Solana Devnet ready</span></div>
+                <div className="passport-wallet"><small>MULTICHAIN CLASSROOM IDENTITY</small>{campusUsername && <strong>@{campusUsername}</strong>}<strong>{ethWallet}</strong><strong>{solWallet}</strong><span><i /> Sepolia + Solana Devnet ready</span></div>
               </section>
               <div className="passport-metrics"><article><strong>02</strong><span>Lessons completed</span></article><article><strong>03</strong><span>Onchain actions</span></article><article><strong>{claimedCampaigns.length.toString().padStart(2, "0")}</strong><span>Campaigns joined</span></article><article><strong>{headClaimed ? "03" : "02"}</strong><span>Assets collected</span></article></div>
               <div className="passport-layout">
@@ -544,7 +609,7 @@ export default function OnchainLab() {
         <div className="onboarding-overlay">
           <div className="onboarding-card">
             <div className="onboarding-art"><div className="portal-ring one" /><div className="portal-ring two" /><MaskOrb /><span>ETHEREUM<br />+ SOLANA<br />CLASSROOM</span></div>
-            <div className="onboarding-copy"><span className="eyebrow">FACELESS CAMPUS OS</span><h2>Learn. Build. Play.<br />Create. Earn.</h2><p>One profile for 25 lessons, the real live-session Mask, Ethereum and Solana practice, project demos, games and creator campaigns.</p><label className="username-field"><span>CHOOSE YOUR CAMPUS USERNAME</span><div><b>@</b><input value={username} onChange={(event) => setUsername(event.target.value)} maxLength={24} autoComplete="username" aria-label="Campus username" /></div><small>Friends will use this name to send you classroom assets.</small></label><button className="google-button" onClick={enterLab} disabled={!privyReady || loading}><span>G</span>{!privyReady ? "Loading secure sign-in…" : loading ? "Opening Google…" : "Continue with Google"}</button><button className="demo-link" onClick={() => setDemoMode(true)}>Explore the student demo</button><small>Google sign-in creates user-controlled Ethereum and Solana wallets through Privy. Faceless never stores private keys.</small></div>
+            <div className="onboarding-copy"><span className="eyebrow">FACELESS CAMPUS OS</span><h2>Learn. Build. Play.<br />Create. Earn.</h2><p>One profile for 25 lessons, the real live-session Mask, Ethereum and Solana practice, project demos, games and creator campaigns.</p><label className="username-field"><span>CHOOSE YOUR CAMPUS USERNAME</span><div><b>@</b><input value={username} onChange={(event) => { setUsername(event.target.value); setProfileError(""); }} maxLength={24} autoComplete="username" aria-label="Campus username" disabled={profileStatus === "saving"} /></div><small>Friends will use this name to send you classroom assets.</small></label>{profileError && <div className="profile-error">{profileError}</div>}<button className="google-button" onClick={enterLab} disabled={!privyReady || loading || profileStatus === "saving"}><span>{authenticated ? "✓" : "G"}</span>{!privyReady ? "Loading secure sign-in…" : loading ? "Opening Google…" : profileStatus === "saving" ? "Securing both wallets…" : authenticated ? "Save campus username" : "Continue with Google"}</button><button className="demo-link" onClick={() => setDemoMode(true)}>Explore the student demo</button><small>Google sign-in creates user-controlled Ethereum and Solana wallets through Privy. Faceless never stores private keys.</small></div>
           </div>
         </div>
       )}

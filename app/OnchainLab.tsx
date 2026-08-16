@@ -42,6 +42,8 @@ type LearningState = {
   resume: LearningRecord | null;
   cohort?: { activeStudents: number; lessonsCompleted: number; lessonsInProgress: number; completionRate: number; courses: Array<{ course: Course; completed: number }> };
 };
+type MaskCitation = { title: string; url: string };
+type MaskMessage = { role: "user" | "assistant"; text: string; citations?: MaskCitation[] };
 
 type Drop = {
   id: number;
@@ -190,7 +192,8 @@ export default function OnchainLab() {
   const [selectedCourse, setSelectedCourse] = useState<Course>("ethereum");
   const [selectedLesson, setSelectedLesson] = useState<Lesson>(ethereumLessons[1]);
   const [maskQuestion, setMaskQuestion] = useState("");
-  const [maskAnswer, setMaskAnswer] = useState("Ask me anything about the lesson. I’ll use the approved Faceless material and point you to the next activity.");
+  const [maskMessages, setMaskMessages] = useState<MaskMessage[]>([{ role: "assistant", text: "Ask me anything. If it connects to a Faceless lesson, I’ll use the approved material. If it doesn’t, I’ll answer it normally." }]);
+  const [maskBusy, setMaskBusy] = useState(false);
   const [claimedCampaigns, setClaimedCampaigns] = useState<number[]>([]);
   const [username, setUsername] = useState("aanya");
   const [campusUsername, setCampusUsername] = useState("");
@@ -648,20 +651,33 @@ export default function OnchainLab() {
     setSelectedLesson(firstIncomplete ?? lessonTracks[course][0]);
   }
 
-  function askMask(event: React.FormEvent<HTMLFormElement>) {
+  async function askMask(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const question = maskQuestion.trim();
-    if (!question) return;
-    const lower = question.toLowerCase();
-    let answer = `In “${selectedLesson.title}”, the key idea is: ${selectedLesson.copy} Your next step is the ${selectedLesson.action.toLowerCase()} guided activity using test assets only.`;
-    if (lower.includes("gas")) answer = "Gas is the network fee paid for Ethereum to process work. Simple transfers generally use less gas than complex smart-contract actions, and the price rises when demand for block space is high. Open Lesson 7 to see the approved explainer.";
-    if (lower.includes("nft")) answer = "An NFT is a unique token that can act as a public digital certificate. It can show the issuer, current owner and transfer history—but it does not stop an image from being copied. Open Lesson 9, then claim your testnet Faceless Head.";
-    if (lower.includes("solana") || lower.includes("sol")) answer = "Use Solana Devnet for fast wallet, token, collectible, loyalty and game experiments. It uses test SOL with no real value. Phantom can be connected later, while the classroom wallet keeps onboarding simple.";
-    if (lower.includes("bitcoin")) answer = "Bitcoin is the first course in the ownership and public-ledger journey. Start with money transfer, Satoshi, mining and fixed supply; then compare Bitcoin’s specialised network with Ethereum and Solana applications.";
-    if (lower.includes("clip") || lower.includes("shoot") || lower.includes("content")) answer = "Start with the campaign goal, find one clear hook, capture at least five useful shots, keep the edit vertical and fast, add readable subtitles, then check every claim against the brief before posting.";
-    if (lower.includes("real") || lower.includes("money") || lower.includes("risk")) answer = "Everything in the classroom wallet and game flows uses Sepolia or Solana Devnet and has no real monetary value. Mask can explain and guide, but you approve every wallet action yourself.";
-    setMaskAnswer(answer);
+    if (!question || maskBusy) return;
+    if (!identityToken) return notify("Sign in to ask the live Mask");
+    const previous = maskMessages.slice(-8);
+    setMaskMessages((current) => [...current, { role: "user", text: question }]);
     setMaskQuestion("");
+    setMaskBusy(true);
+    try {
+      const response = await fetch("/api/mask", {
+        method: "POST",
+        headers: { "content-type": "application/json", "privy-id-token": identityToken },
+        body: JSON.stringify({
+          question,
+          history: previous,
+          lesson: { course: selectedLesson.course, title: selectedLesson.title, summary: selectedLesson.copy },
+        }),
+      });
+      const result = await response.json() as { answer?: string; citations?: MaskCitation[]; error?: string };
+      if (!response.ok || !result.answer) throw new Error(result.error || "Mask could not answer right now");
+      setMaskMessages((current) => [...current, { role: "assistant", text: result.answer!, citations: result.citations }]);
+    } catch (error) {
+      setMaskMessages((current) => [...current, { role: "assistant", text: error instanceof Error ? error.message : "I couldn’t answer that right now. Please try again." }]);
+    } finally {
+      setMaskBusy(false);
+    }
   }
 
   function claimCampaign(id: number) {
@@ -808,15 +824,18 @@ export default function OnchainLab() {
           {active === "mask" && (
             <div className="mask-page">
               <section className="mask-stage">
-                <div className="mask-stage-copy"><span className="eyebrow">YOUR AI CO-HOST</span><h2>Ask Mask.<br /><em>Then do it.</em></h2><p>Questions are answered from the approved Faceless curriculum, with a lesson and safe next action attached.</p></div>
+                <div className="mask-stage-copy"><span className="eyebrow">YOUR AI CO-HOST</span><h2>Ask Mask.<br /><em>Anything.</em></h2><p>A general AI co-host that also understands every approved Faceless lesson. Curriculum when relevant—direct answers when it isn’t.</p></div>
                 <div className="mask-stage-orb"><div className="signal-ring ring-one" /><div className="signal-ring ring-two" /><MaskOrb /></div>
               </section>
               <section className="mask-chat card">
-                <div className="mask-context"><span><b>COURSE CONTEXT</b><small>{selectedLesson.course.toUpperCase()} · Lesson {selectedLesson.id}</small></span><button onClick={() => setActive("learn")}>{selectedLesson.title} ↗</button></div>
-                <div className="chat-answer"><MaskOrb compact /><div><small>MASK</small><p>{maskAnswer}</p></div></div>
-                <div className="prompt-chips">{["Why does gas change?", "What makes an NFT unique?", "Is this real money?"].map((prompt) => <button key={prompt} onClick={() => setMaskQuestion(prompt)}>{prompt}</button>)}</div>
-                <form className="mask-form" onSubmit={askMask}><input value={maskQuestion} onChange={(event) => setMaskQuestion(event.target.value)} placeholder="Ask about this lesson, either chain or your next activity…" aria-label="Question for Mask" /><button type="submit">Ask Mask →</button></form>
-                <small className="prototype-note">Prototype response mode · Mask does not sign wallet transactions.</small>
+                <div className="mask-context"><span><b>HYBRID ANSWER MODE</b><small>GENERAL KNOWLEDGE · FACELESS CURRICULUM · CURRENT WEB WHEN NEEDED</small></span><button onClick={() => setActive("learn")}>Optional context: {selectedLesson.title} ↗</button></div>
+                <div className="mask-conversation" aria-live="polite">{maskMessages.map((message, index) => <div key={`${message.role}-${index}`} className={`chat-answer ${message.role}`}>
+                  {message.role === "assistant" ? <MaskOrb compact /> : <span className="student-chat-mark">{initials}</span>}
+                  <div><small>{message.role === "assistant" ? "MASK" : "YOU"}</small><p>{message.text}</p>{message.citations?.length ? <div className="mask-citations">{message.citations.map((citation) => <a key={citation.url} href={citation.url} target="_blank" rel="noreferrer">{citation.title} ↗</a>)}</div> : null}</div>
+                </div>)}{maskBusy && <div className="chat-answer assistant thinking"><MaskOrb compact /><div><small>MASK</small><p>Thinking…</p></div></div>}</div>
+                <div className="prompt-chips">{["Explain gas simply", "Help me plan a Reel", "What happened in the news today?"].map((prompt) => <button key={prompt} onClick={() => setMaskQuestion(prompt)}>{prompt}</button>)}</div>
+                <form className="mask-form" onSubmit={askMask}><input value={maskQuestion} onChange={(event) => setMaskQuestion(event.target.value)} placeholder="Ask Mask anything…" aria-label="Question for Mask" maxLength={1500} /><button type="submit" disabled={maskBusy}>{maskBusy ? "Thinking…" : "Ask Mask →"}</button></form>
+                <small className="prototype-note">Mask can explain and guide, but never signs wallet transactions or guarantees financial outcomes.</small>
               </section>
               <section className="mask-tools"><article><span>01</span><b>Understand</b><p>Explain the concept using the lesson you are watching.</p></article><article><span>02</span><b>Create</b><p>Turn the concept into a safe testnet activity.</p></article><article><span>03</span><b>Campaign</b><p>Convert a partner brief into a checklist, hook and script.</p></article></section>
             </div>

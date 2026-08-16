@@ -1,6 +1,8 @@
 "use client";
 
-import { ChangeEvent, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { usePrivy, useWallets as useEthereumWallets } from "@privy-io/react-auth";
+import { useExportWallet as useExportSolanaWallet, useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
 import LiveMask from "./LiveMask";
 
 type Tab = "home" | "learn" | "mask" | "wallet" | "create" | "games" | "tools" | "campaigns" | "launchpad" | "passport" | "drops" | "admin";
@@ -118,9 +120,17 @@ function MaskOrb({ compact = false }: { compact?: boolean }) {
   );
 }
 
+function shortenAddress(address: string) {
+  return address.length > 12 ? `${address.slice(0, 6)}...${address.slice(-4)}` : address;
+}
+
 export default function OnchainLab() {
+  const { ready: privyReady, authenticated, user, login, logout, linkWallet, exportWallet: exportEthereumWallet } = usePrivy();
+  const { wallets: ethereumWallets } = useEthereumWallets();
+  const { wallets: solanaWallets } = useSolanaWallets();
+  const { exportWallet: exportSolanaWallet } = useExportSolanaWallet();
   const [active, setActive] = useState<Tab>("home");
-  const [onboarded, setOnboarded] = useState(false);
+  const [demoMode, setDemoMode] = useState(false);
   const [loading, setLoading] = useState(false);
   const [balance, setBalance] = useState(0);
   const [solBalance, setSolBalance] = useState(0);
@@ -139,13 +149,25 @@ export default function OnchainLab() {
   const [username, setUsername] = useState("aanya");
   const [launchMode, setLaunchMode] = useState<LaunchMode>("testnet");
 
-  const ethWallet = "0x71F4...9A2C";
-  const solWallet = "8maZ...xQ7P";
+  const ethereumWallet = ethereumWallets.find((item) => item.walletClientType === "privy") ?? ethereumWallets[0];
+  const solanaWallet = solanaWallets[0];
+  const ethWalletAddress = ethereumWallet?.address ?? "0x71F49A2C";
+  const solWalletAddress = solanaWallet?.address ?? "8maZxQ7P";
+  const ethWallet = shortenAddress(ethWalletAddress);
+  const solWallet = shortenAddress(solWalletAddress);
   const wallet = activeChain === "ethereum" ? ethWallet : solWallet;
+  const displayName = user?.google?.name ?? user?.google?.email?.split("@")[0] ?? "Aanya K.";
+  const displayEmail = user?.google?.email ?? "Student · Cohort 04";
+  const initials = displayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+  const onboarded = authenticated || demoMode;
   const completed = 2 + (headClaimed ? 1 : 0);
   const progress = Math.round((completed / 7) * 100);
 
   const title = useMemo(() => navItems.find((item) => item.id === active)?.label ?? "Home", [active]);
+
+  useEffect(() => {
+    if (authenticated) setLoading(false);
+  }, [authenticated]);
 
   function notify(message: string) {
     setToast(message);
@@ -158,11 +180,17 @@ export default function OnchainLab() {
       return notify("Choose 3–24 letters, numbers or underscores, starting with a letter");
     }
     setLoading(true);
-    window.setTimeout(() => {
-      setLoading(false);
-      setOnboarded(true);
-      notify(`@${cleanUsername} linked to both classroom wallets`);
-    }, 900);
+    login({ loginMethods: ["google"] });
+    window.setTimeout(() => setLoading(false), 2500);
+  }
+
+  async function exportWallet(chain: Chain) {
+    try {
+      if (chain === "ethereum" && ethereumWallet) await exportEthereumWallet({ address: ethereumWallet.address });
+      if (chain === "solana" && solanaWallet) await exportSolanaWallet({ address: solanaWallet.address });
+    } catch {
+      notify(`${chain === "ethereum" ? "Ethereum" : "Solana"} wallet export was cancelled`);
+    }
   }
 
   function claimFaucet() {
@@ -258,9 +286,9 @@ export default function OnchainLab() {
         </div>
 
         <div className="sidebar-profile">
-          <span className="profile-dot">AK</span>
-          <span><strong>Aanya K.</strong><small>Student · Cohort 04</small></span>
-          <button aria-label="Profile options">•••</button>
+          <span className="profile-dot">{initials}</span>
+          <span><strong>{displayName}</strong><small>{authenticated ? displayEmail : "Student · Cohort 04"}</small></span>
+          <button aria-label={authenticated ? "Sign out" : "Profile options"} onClick={() => authenticated ? logout() : notify("Sign in to open your profile")}>{authenticated ? "↗" : "•••"}</button>
         </div>
       </aside>
 
@@ -388,10 +416,11 @@ export default function OnchainLab() {
           {active === "wallet" && (
             <div className="page-stack">
               <section className="wallet-hero">
-                <div><span className="eyebrow">YOUR MULTICHAIN CLASSROOM IDENTITY</span><h2>{wallet}</h2><p>Practise across Ethereum and Solana. Connect MetaMask or Phantom when you are ready.</p></div>
+                <div><span className="eyebrow">YOUR MULTICHAIN CLASSROOM IDENTITY</span><h2>{wallet}</h2><p>{authenticated ? "Your Privy wallets are ready for supervised Ethereum and Solana practice." : "Demo identity · sign in with Google to create your real classroom wallets."}</p></div>
                 <div className="wallet-balance"><small>{activeChain === "ethereum" ? "SEPOLIA BALANCE" : "SOLANA DEVNET BALANCE"}</small><strong>{activeChain === "ethereum" ? `${balance.toFixed(3)} ETH` : `${solBalance.toFixed(2)} SOL`}</strong><button onClick={claimFaucet}>{activeChain === "ethereum" ? (balance ? "Claimed" : "Claim ETH faucet") : (solBalance ? "Claimed" : "Claim SOL faucet")}</button></div>
               </section>
               <div className="dual-wallets"><button className={activeChain === "ethereum" ? "active" : ""} onClick={() => setActiveChain("ethereum")}><span className="chain-coin eth">Ξ</span><span><small>ETHEREUM CLASSROOM WALLET</small><b>{ethWallet}</b><em>{balance.toFixed(3)} test ETH · Sepolia</em></span><strong>Open →</strong></button><button className={activeChain === "solana" ? "active" : ""} onClick={() => setActiveChain("solana")}><span className="chain-coin sol">S</span><span><small>SOLANA CLASSROOM WALLET</small><b>{solWallet}</b><em>{solBalance.toFixed(2)} test SOL · Devnet</em></span><strong>Open →</strong></button></div>
+              {authenticated && <section className="wallet-control card"><div><span className="eyebrow">YOU CONTROL YOUR WALLETS</span><h3>Connect or export whenever you need.</h3><p>Faceless never receives or stores your private keys. Export opens Privy’s protected wallet screen.</p></div><div><button onClick={() => linkWallet({ walletChainType: "ethereum-and-solana" })}>Connect MetaMask or Phantom</button><button disabled={!ethereumWallet} onClick={() => exportWallet("ethereum")}>Export Ethereum</button><button disabled={!solanaWallet} onClick={() => exportWallet("solana")}>Export Solana</button></div></section>}
               <div className="asset-layout">
                 <section className="card asset-section"><div className="section-head"><span><b>COLLECTIBLES</b><small>2 classroom assets</small></span></div><div className="asset-grid"><div className="asset-tile"><img src="/faceless-purple.png" alt="Purple Faceless classroom head" /><span><b>Ethereum Lab Pass</b><small>ERC-1155 · Testnet</small></span></div>{headClaimed ? <div className="asset-tile"><img src="/faceless-blue.png" alt="Blue Faceless classroom head" /><span><b>Faceless Head #084</b><small>Claimed today</small></span></div> : <button className="asset-empty" onClick={claimHead}>+ Claim your Faceless head</button>}</div></section>
                 <section className="card tx-section"><div className="section-head"><span><b>MULTICHAIN ACTIVITY</b><small>Sepolia + Solana Devnet</small></span></div>{["Minted Ethereum Lab Pass", "Created Solana Devnet wallet", "Created Ethereum wallet"].map((label, index) => <div className="tx-row" key={label}><span className={index === 0 ? "tx-dot violet" : "tx-dot"} /><span><b>{label}</b><small>{index + 7} minutes ago</small></span><code>{index === 1 ? "8maZ...xQ7P" : `0x${index + 3}a...${index}f9`}</code></div>)}</section>
@@ -476,7 +505,7 @@ export default function OnchainLab() {
           {active === "passport" && (
             <div className="page-stack">
               <section className="passport-hero">
-                <div className="passport-identity"><span className="profile-dot large">AK</span><div><span className="eyebrow">FACELESS STUDENT PASSPORT</span><h2>Aanya K.</h2><p>Creator · Builder · Cohort 04</p></div></div>
+                <div className="passport-identity"><span className="profile-dot large">{initials}</span><div><span className="eyebrow">FACELESS STUDENT PASSPORT</span><h2>{displayName}</h2><p>Creator · Builder · Cohort 04</p></div></div>
                 <div className="passport-wallet"><small>MULTICHAIN CLASSROOM IDENTITY</small><strong>{ethWallet}</strong><strong>{solWallet}</strong><span><i /> Sepolia + Solana Devnet ready</span></div>
               </section>
               <div className="passport-metrics"><article><strong>02</strong><span>Lessons completed</span></article><article><strong>03</strong><span>Onchain actions</span></article><article><strong>{claimedCampaigns.length.toString().padStart(2, "0")}</strong><span>Campaigns joined</span></article><article><strong>{headClaimed ? "03" : "02"}</strong><span>Assets collected</span></article></div>
@@ -515,7 +544,7 @@ export default function OnchainLab() {
         <div className="onboarding-overlay">
           <div className="onboarding-card">
             <div className="onboarding-art"><div className="portal-ring one" /><div className="portal-ring two" /><MaskOrb /><span>ETHEREUM<br />+ SOLANA<br />CLASSROOM</span></div>
-            <div className="onboarding-copy"><span className="eyebrow">FACELESS CAMPUS OS</span><h2>Learn. Build. Play.<br />Create. Earn.</h2><p>One profile for 25 lessons, the real live-session Mask, Ethereum and Solana practice, project demos, games and creator campaigns.</p><label className="username-field"><span>CHOOSE YOUR CAMPUS USERNAME</span><div><b>@</b><input value={username} onChange={(event) => setUsername(event.target.value)} maxLength={24} autoComplete="username" aria-label="Campus username" /></div><small>Friends will use this name to send you classroom assets.</small></label><button className="google-button" onClick={enterLab} disabled={loading}><span>G</span>{loading ? "Preparing both classroom wallets…" : "Continue with Google"}</button><button className="demo-link" onClick={() => setOnboarded(true)}>Explore the student demo</button><small>Private pilot preview · production wallet activation will use Privy and never store student private keys.</small></div>
+            <div className="onboarding-copy"><span className="eyebrow">FACELESS CAMPUS OS</span><h2>Learn. Build. Play.<br />Create. Earn.</h2><p>One profile for 25 lessons, the real live-session Mask, Ethereum and Solana practice, project demos, games and creator campaigns.</p><label className="username-field"><span>CHOOSE YOUR CAMPUS USERNAME</span><div><b>@</b><input value={username} onChange={(event) => setUsername(event.target.value)} maxLength={24} autoComplete="username" aria-label="Campus username" /></div><small>Friends will use this name to send you classroom assets.</small></label><button className="google-button" onClick={enterLab} disabled={!privyReady || loading}><span>G</span>{!privyReady ? "Loading secure sign-in…" : loading ? "Opening Google…" : "Continue with Google"}</button><button className="demo-link" onClick={() => setDemoMode(true)}>Explore the student demo</button><small>Google sign-in creates user-controlled Ethereum and Solana wallets through Privy. Faceless never stores private keys.</small></div>
           </div>
         </div>
       )}

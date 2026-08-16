@@ -19,7 +19,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
   const origin = `${protocol}://${host}`;
   const title = "Faceless Campus OS";
-  const description = "Learn with Mask, practise onchain, build original work and join creator campaigns from one student profile.";
+  const description = "Learn Blockchain, Bitcoin and Ethereum with the live-session Mask, build on Ethereum and Solana testnets, play, create and earn from one student profile.";
 
   return {
     title,
@@ -29,7 +29,7 @@ export async function generateMetadata(): Promise<Metadata> {
       title,
       description,
       type: "website",
-      images: [{ url: `${origin}/og.png`, width: 1680, height: 945, alt: "Faceless Campus OS — Learn, build, create and earn." }],
+      images: [{ url: `${origin}/og.png`, width: 1680, height: 945, alt: "Faceless Campus OS — Learn, build, play, create and earn." }],
     },
     twitter: {
       card: "summary_large_image",

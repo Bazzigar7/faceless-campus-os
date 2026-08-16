@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useIdentityToken, usePrivy, useSendTransaction as useSendEthereumTransaction, useWallets as useEthereumWallets } from "@privy-io/react-auth";
 import { useExportWallet as useExportSolanaWallet, useSignAndSendTransaction, useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
 import {
@@ -32,6 +32,15 @@ type FaucetState = {
   signerReady: boolean;
   chains: FaucetChainState[];
   recent: Array<{ id: string; chain: Chain; amount: string; status: "queued" | "processing" | "sent" | "failed"; transactionHash?: string | null; claimedAt: string; errorMessage?: string | null }>;
+};
+type LearningRecord = { course: Course; lessonId: number; status: "in_progress" | "completed"; positionSeconds: number; durationSeconds: number; updatedAt: string; completedAt?: string | null };
+type LearningState = {
+  completedCount: number;
+  totalLessons: number;
+  records: LearningRecord[];
+  courseProgress: Array<{ course: Course; total: number; completed: number }>;
+  resume: LearningRecord | null;
+  cohort?: { activeStudents: number; lessonsCompleted: number; lessonsInProgress: number; completionRate: number; courses: Array<{ course: Course; completed: number }> };
 };
 
 type Drop = {
@@ -201,6 +210,10 @@ export default function OnchainLab() {
     ethereum: { amount: "0.002", maxClaims: 1, enabled: false },
     solana: { amount: "0.05", maxClaims: 1, enabled: false },
   });
+  const [learningState, setLearningState] = useState<LearningState | null>(null);
+  const [learningBusy, setLearningBusy] = useState(false);
+  const learningResumeApplied = useRef(false);
+  const lastProgressSent = useRef(0);
 
   const ethereumWallet = ethereumWallets.find((item) => item.walletClientType === "privy") ?? ethereumWallets[0];
   const solanaWallet = solanaWallets[0];
@@ -213,8 +226,10 @@ export default function OnchainLab() {
   const displayEmail = user?.google?.email ?? "Student · Cohort 04";
   const initials = displayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
   const onboarded = demoMode || (authenticated && profileStatus === "ready");
-  const completed = 2 + (headClaimed ? 1 : 0);
-  const progress = Math.round((completed / 7) * 100);
+  const completed = learningState?.completedCount ?? 0;
+  const progress = Math.round((completed / 25) * 100);
+  const selectedProgress = learningState?.records.find((record) => record.course === selectedLesson.course && record.lessonId === selectedLesson.id);
+  const selectedComplete = selectedProgress?.status === "completed";
 
   const title = useMemo(() => navItems.find((item) => item.id === active)?.label ?? "Home", [active]);
 
@@ -249,6 +264,7 @@ export default function OnchainLab() {
   useEffect(() => {
     if (!authenticated || !identityToken || profileStatus !== "ready") return;
     void loadFaucetState();
+    void loadLearningState();
   }, [authenticated, identityToken, profileStatus]);
 
   function notify(message: string) {
@@ -292,6 +308,66 @@ export default function OnchainLab() {
     } catch (error) {
       setFaucetError(error instanceof Error ? error.message : "Campus Faucet is unavailable");
     }
+  }
+
+  async function loadLearningState() {
+    if (!identityToken) return;
+    try {
+      const response = await fetch("/api/learning", { headers: { "privy-id-token": identityToken } });
+      const result = await response.json() as LearningState & { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Learning progress is unavailable");
+      setLearningState(result);
+      if (!learningResumeApplied.current && result.resume) {
+        const lesson = lessonTracks[result.resume.course].find((item) => item.id === result.resume?.lessonId);
+        if (lesson) {
+          setSelectedCourse(result.resume.course);
+          setSelectedLesson(lesson);
+        }
+        learningResumeApplied.current = true;
+      }
+    } catch {
+      // Lessons stay available even if progress sync is briefly unavailable.
+    }
+  }
+
+  async function saveLessonProgress(lesson: Lesson, status: "in_progress" | "completed", positionSeconds = 0, durationSeconds = 0) {
+    if (!identityToken || learningBusy) return;
+    if (status === "completed") setLearningBusy(true);
+    try {
+      const response = await fetch("/api/learning", {
+        method: "POST",
+        headers: { "content-type": "application/json", "privy-id-token": identityToken },
+        body: JSON.stringify({ course: lesson.course, lessonId: lesson.id, status, positionSeconds, durationSeconds }),
+      });
+      const result = await response.json() as LearningState & { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Lesson progress could not be saved");
+      setLearningState(result);
+      if (status === "completed") notify(`${lesson.title} completed — activity unlocked`);
+    } catch (error) {
+      if (status === "completed") notify(error instanceof Error ? error.message : "Lesson progress could not be saved");
+    } finally {
+      if (status === "completed") setLearningBusy(false);
+    }
+  }
+
+  function trackVideoProgress(event: React.SyntheticEvent<HTMLVideoElement>) {
+    const video = event.currentTarget;
+    const now = Math.floor(video.currentTime);
+    if (now - lastProgressSent.current < 10) return;
+    lastProgressSent.current = now;
+    void saveLessonProgress(selectedLesson, "in_progress", now, Math.floor(video.duration || 0));
+  }
+
+  function resumeLearningQuest() {
+    const resume = learningState?.resume;
+    if (resume) {
+      const lesson = lessonTracks[resume.course].find((item) => item.id === resume.lessonId);
+      if (lesson) {
+        setSelectedCourse(resume.course);
+        setSelectedLesson(lesson);
+      }
+    }
+    setActive("learn");
   }
 
   async function claimCampusFaucet(chain: Chain = activeChain) {
@@ -558,13 +634,18 @@ export default function OnchainLab() {
 
   function openLesson(lesson: Lesson) {
     setSelectedLesson(lesson);
+    setSelectedCourse(lesson.course);
     setActive("learn");
+    lastProgressSent.current = 0;
+    const record = learningState?.records.find((item) => item.course === lesson.course && item.lessonId === lesson.id);
+    if (record?.status !== "completed") void saveLessonProgress(lesson, "in_progress", record?.positionSeconds ?? 0, record?.durationSeconds ?? 0);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function chooseCourse(course: Course) {
     setSelectedCourse(course);
-    setSelectedLesson(lessonTracks[course][0]);
+    const firstIncomplete = lessonTracks[course].find((lesson) => !learningState?.records.some((record) => record.course === course && record.lessonId === lesson.id && record.status === "completed"));
+    setSelectedLesson(firstIncomplete ?? lessonTracks[course][0]);
   }
 
   function askMask(event: React.FormEvent<HTMLFormElement>) {
@@ -639,7 +720,7 @@ export default function OnchainLab() {
                   <span className="eyebrow">LEARN · BUILD · PLAY · CREATE · EARN</span>
                   <h2>Learn the idea.<br /><em>Build your version.</em></h2>
                   <p>Mask connects 25 lessons to Ethereum and Solana testnet actions, games, projects and creator opportunities.</p>
-                  <button className="primary" onClick={() => setActive("learn")}>Continue your quest <span>→</span></button>
+                  <button className="primary" onClick={resumeLearningQuest}>{learningState?.resume ? "Continue your lesson" : "Start learning"} <span>→</span></button>
                 </div>
                 <div className="hero-visual">
                   <div className="signal-ring ring-one" />
@@ -653,7 +734,7 @@ export default function OnchainLab() {
                 <div className="section-head"><span><b>YOUR PROGRESS</b><small>Blockchain · Bitcoin · Ethereum</small></span><strong>{progress}%</strong></div>
                 <div className="progress-track"><i style={{ width: `${progress}%` }} /></div>
                 <div className="progress-stats">
-                  <span><b>{completed}</b><small>Quests done</small></span>
+                  <span><b>{completed}</b><small>Lessons done</small></span>
                   <span><b>03</b><small>Assets owned</small></span>
                   <span><b>02</b><small>Test networks</small></span>
                 </div>
@@ -666,9 +747,9 @@ export default function OnchainLab() {
               </section>
 
               <section className="quest-card card">
-                <div className="quest-index">02</div>
-                <div><span className="eyebrow">ACTIVE QUEST</span><h3>Your first multichain transaction</h3><p>Send a test asset on either chain, then let Mask explain the receipt.</p></div>
-                <button onClick={() => setActive("learn")}>Start →</button>
+                <div className="quest-index">{String((learningState?.resume?.lessonId ?? 1)).padStart(2, "0")}</div>
+                <div><span className="eyebrow">ACTIVE LESSON</span><h3>{learningState?.resume ? lessonTracks[learningState.resume.course].find((lesson) => lesson.id === learningState.resume?.lessonId)?.title : "Start with blockchain basics"}</h3><p>Watch the explainer, ask Mask a question and unlock its guided activity.</p></div>
+                <button onClick={resumeLearningQuest}>{learningState?.resume ? "Resume" : "Start"} →</button>
               </section>
 
               <section className="home-mission card">
@@ -694,27 +775,28 @@ export default function OnchainLab() {
           {active === "learn" && (
             <div className="page-stack">
               <section className="page-intro learn-intro">
-                <div><span className="eyebrow">25 APPROVED FACELESS LESSONS</span><h2>Learn the chain.<br />Then use it.</h2><p>Blockchain basics, Bitcoin and Ethereum—connected to Mask and a practical activity.</p></div>
+                <div><span className="eyebrow">25 APPROVED FACELESS LESSONS</span><h2>Learn the chain.<br />Then use it.</h2><p>Blockchain basics, Bitcoin and Ethereum—connected to Mask and a practical activity.</p><span className="learning-sync"><i style={{ width: `${progress}%` }} /><b>{completed} of 25 complete · saved to your Campus profile</b></span></div>
                 <button className="lesson-orb" onClick={() => setActive("mask")}><MaskOrb compact /><span>Ask Mask<small>Grounded in this course</small></span></button>
               </section>
               <div className="course-switcher" aria-label="Course tracks">
-                {(["blockchain", "bitcoin", "ethereum"] as Course[]).map((course) => <button key={course} className={selectedCourse === course ? "active" : ""} onClick={() => chooseCourse(course)}><span>{course === "blockchain" ? "01" : course === "bitcoin" ? "02" : "03"}</span><b>{course === "blockchain" ? "Blockchain basics" : course === "bitcoin" ? "Bitcoin foundations" : "Ethereum & applications"}</b><small>{lessonTracks[course].length} lessons</small></button>)}
+                {(["blockchain", "bitcoin", "ethereum"] as Course[]).map((course) => { const courseState = learningState?.courseProgress.find((item) => item.course === course); return <button key={course} className={selectedCourse === course ? "active" : ""} onClick={() => chooseCourse(course)}><span>{course === "blockchain" ? "01" : course === "bitcoin" ? "02" : "03"}</span><b>{course === "blockchain" ? "Blockchain basics" : course === "bitcoin" ? "Bitcoin foundations" : "Ethereum & applications"}</b><small>{courseState?.completed ?? 0} / {lessonTracks[course].length} complete</small></button>; })}
               </div>
               <section className="lesson-player card">
-                <div className="video-frame">{selectedLesson.video ? <video key={selectedLesson.video} controls preload="metadata" src={selectedLesson.video}>Your browser does not support video playback.</video> : <div className="mask-video-sync"><MaskOrb /><b>{selectedLesson.title}</b><span>MASK-SYNCED LESSON</span><button onClick={() => notify("Lesson opened from the Mask course library")}>Play lesson ▶</button></div>}<span>APPROVED FACELESS LESSON</span></div>
+                <div className="video-frame">{selectedLesson.video ? <video key={selectedLesson.video} controls preload="metadata" src={selectedLesson.video} onLoadedMetadata={(event) => { const savedPosition = selectedProgress?.positionSeconds ?? 0; if (savedPosition > 0 && savedPosition < event.currentTarget.duration - 3) event.currentTarget.currentTime = savedPosition; }} onPlay={() => { if (!selectedComplete) void saveLessonProgress(selectedLesson, "in_progress", selectedProgress?.positionSeconds ?? 0, selectedProgress?.durationSeconds ?? 0); }} onTimeUpdate={trackVideoProgress} onEnded={(event) => void saveLessonProgress(selectedLesson, "completed", Math.floor(event.currentTarget.duration || 0), Math.floor(event.currentTarget.duration || 0))}>Your browser does not support video playback.</video> : <div className="mask-video-sync"><MaskOrb /><b>{selectedLesson.title}</b><span>MASK-SYNCED LESSON</span><button onClick={() => { if (!selectedComplete) void saveLessonProgress(selectedLesson, "in_progress"); notify("Lesson opened from the Mask course library"); }}>Open lesson ▶</button></div>}<span>APPROVED FACELESS LESSON</span></div>
                 <div className="lesson-focus">
                   <span className="eyebrow">LESSON {String(selectedLesson.id).padStart(2, "0")} · {selectedLesson.unit}</span>
                   <h3>{selectedLesson.title}</h3>
                   <p>{selectedLesson.copy}</p>
-                  <div className="lesson-actions"><button className="primary" onClick={() => notify(`${selectedLesson.action} opened in guided mode`)}>{selectedLesson.action} →</button><button className="secondary" onClick={() => setActive("mask")}>Ask Mask</button></div>
-                  <small>Mask answers from the approved course and can bring you back to the exact lesson.</small>
+                  <div className={selectedComplete ? "lesson-complete-panel done" : "lesson-complete-panel"}><span>{selectedComplete ? "✓" : "○"}</span><div><b>{selectedComplete ? "Lesson complete" : "Finish this lesson"}</b><small>{selectedComplete ? "Your guided activity is unlocked." : "The video also completes automatically when it ends."}</small></div>{!selectedComplete && <button disabled={learningBusy} onClick={() => saveLessonProgress(selectedLesson, "completed", selectedProgress?.positionSeconds ?? 0, selectedProgress?.durationSeconds ?? 0)}>{learningBusy ? "Saving…" : "Mark complete"}</button>}</div>
+                  <div className="lesson-actions"><button className="primary" disabled={!selectedComplete} onClick={() => notify(`${selectedLesson.action} opened in guided mode`)}>{selectedComplete ? `${selectedLesson.action} →` : "Complete to unlock"}</button><button className="secondary" onClick={() => setActive("mask")}>Ask Mask</button></div>
+                  <small>Progress follows your Campus profile across devices. Mask can bring you back to this exact lesson.</small>
                 </div>
               </section>
-              <div className="course-head"><div><span className="eyebrow">CURRENT COURSE</span><h3>{selectedCourse === "blockchain" ? "Blockchain basics" : selectedCourse === "bitcoin" ? "Bitcoin foundations" : "Ethereum & applications"} · {lessonTracks[selectedCourse].length} lessons</h3></div><span>Mask ready</span></div>
+              <div className="course-head"><div><span className="eyebrow">CURRENT COURSE</span><h3>{selectedCourse === "blockchain" ? "Blockchain basics" : selectedCourse === "bitcoin" ? "Bitcoin foundations" : "Ethereum & applications"} · {lessonTracks[selectedCourse].length} lessons</h3></div><span>{learningState?.courseProgress.find((item) => item.course === selectedCourse)?.completed ?? 0} complete</span></div>
               <div className="lesson-library">
                 {lessonTracks[selectedCourse].map((lesson) => (
-                  <button key={lesson.id} className={selectedLesson.id === lesson.id ? "library-card active" : "library-card"} onClick={() => openLesson(lesson)}>
-                    <span className="library-number">{lesson.state === "complete" ? "✓" : String(lesson.id).padStart(2, "0")}</span>
+                  <button key={lesson.id} className={`${selectedLesson.id === lesson.id ? "library-card active" : "library-card"}${learningState?.records.some((record) => record.course === lesson.course && record.lessonId === lesson.id && record.status === "completed") ? " completed" : ""}`} onClick={() => openLesson(lesson)}>
+                    <span className="library-number">{learningState?.records.some((record) => record.course === lesson.course && record.lessonId === lesson.id && record.status === "completed") ? "✓" : String(lesson.id).padStart(2, "0")}</span>
                     <span className="library-copy"><small>{lesson.unit}</small><strong>{lesson.title}</strong><em>{lesson.copy}</em></span>
                     <span className="library-time">{lesson.time}<b>▶</b></span>
                   </button>
@@ -921,7 +1003,7 @@ export default function OnchainLab() {
                 {faucetError && <div className="faucet-message admin">{faucetError}</div>}
                 {!faucetState?.signerReady && <small className="activation-note">One secure activation step remains before distributor wallets can be prepared.</small>}
               </section>
-              <div className="metric-grid"><div className="metric"><small>ENROLLED</small><strong>128</strong><span>+18 today</span></div><div className="metric"><small>WALLETS CREATED</small><strong>121</strong><span>94.5% ready</span></div><div className="metric"><small>FAUCET CLAIMS</small><strong>109</strong><span>5.45 test ETH</span></div><div className="metric"><small>QUESTS COMPLETED</small><strong>387</strong><span>3.0 per student</span></div></div>
+              <div className="metric-grid"><div className="metric"><small>ACTIVE STUDENTS</small><strong>{learningState?.cohort?.activeStudents ?? 0}</strong><span>Verified Campus profiles</span></div><div className="metric"><small>LESSONS COMPLETED</small><strong>{learningState?.cohort?.lessonsCompleted ?? 0}</strong><span>Across all three courses</span></div><div className="metric"><small>IN PROGRESS</small><strong>{learningState?.cohort?.lessonsInProgress ?? 0}</strong><span>Lessons students can resume</span></div><div className="metric"><small>COURSE COMPLETION</small><strong>{learningState?.cohort?.completionRate ?? 0}%</strong><span>Of all assigned lessons</span></div></div>
               <section className="admin-table card"><div className="section-head"><span><b>STUDENT ACTIVITY</b><small>Private educator record · addresses are public</small></span><div><button>Filter</button><button onClick={() => notify("Wallet list prepared as a private export")}>Export</button></div></div><div className="table-row table-head"><span>Student</span><span>Wallet</span><span>Progress</span><span>Last action</span><span>Status</span></div>{[["Aanya K.", "0x71F4...9A2C", "3 / 7", "NFT claimed", "Active"],["Rohan M.", "0x44B1...18F0", "2 / 7", "ETH received", "Active"],["Meera S.", "0x9DA2...F781", "5 / 7", "Collection draft", "Review"],["Team Orbit", "0xA621...3C09", "6 / 7", "Asset listed", "Active"]].map((row) => <div className="table-row" key={row[0]}>{row.map((cell, i) => <span key={cell} data-label={["Student","Wallet","Progress","Last action","Status"][i]} className={i === 4 ? `status ${cell.toLowerCase()}` : ""}>{cell}</span>)}</div>)}</section>
             </div>
           )}

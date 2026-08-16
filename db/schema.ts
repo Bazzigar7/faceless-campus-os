@@ -90,6 +90,23 @@ export const faucetConfigs = sqliteTable("faucet_configs", {
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+export const lessonProgress = sqliteTable("lesson_progress", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  course: text("course", { enum: ["blockchain", "bitcoin", "ethereum"] }).notNull(),
+  lessonId: integer("lesson_id").notNull(),
+  status: text("status", { enum: ["in_progress", "completed"] }).notNull().default("in_progress"),
+  positionSeconds: integer("position_seconds").notNull().default(0),
+  durationSeconds: integer("duration_seconds").notNull().default(0),
+  startedAt: text("started_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  completedAt: text("completed_at"),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_lesson_progress_user_course_lesson").on(table.userId, table.course, table.lessonId),
+  index("idx_lesson_progress_user_status").on(table.userId, table.status),
+  index("idx_lesson_progress_course_status").on(table.course, table.status),
+]);
+
 export const mainnetLaunchRequests = sqliteTable("mainnet_launch_requests", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

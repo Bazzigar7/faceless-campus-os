@@ -3,10 +3,9 @@
 import { ChangeEvent, useMemo, useState } from "react";
 import LiveMask from "./LiveMask";
 
-type Tab = "home" | "learn" | "mask" | "wallet" | "create" | "games" | "campaigns" | "launchpad" | "passport" | "drops" | "admin";
+type Tab = "home" | "learn" | "mask" | "wallet" | "create" | "games" | "tools" | "campaigns" | "launchpad" | "passport" | "drops" | "admin";
 type Course = "blockchain" | "bitcoin" | "ethereum";
 type Chain = "ethereum" | "solana";
-type ContentStage = "empty" | "processing" | "ready";
 type LaunchMode = "testnet" | "mainnet";
 type Lesson = { id: number; title: string; copy: string; time: string; unit: string; state: string; action: string; video?: string; course: Course };
 
@@ -25,7 +24,8 @@ const navItems: { id: Tab; label: string; mark: string }[] = [
   { id: "mask", label: "Ask Mask", mark: "M" },
   { id: "create", label: "Build lab", mark: "+" },
   { id: "games", label: "Playground", mark: "◆" },
-  { id: "campaigns", label: "Create & earn", mark: "◎" },
+  { id: "tools", label: "Creator tools", mark: "✦" },
+  { id: "campaigns", label: "Campaigns", mark: "◎" },
   { id: "launchpad", label: "Launchpad", mark: "↗" },
   { id: "passport", label: "My passport", mark: "◇" },
   { id: "admin", label: "Educator view", mark: "▦" },
@@ -137,8 +137,6 @@ export default function OnchainLab() {
   const [maskAnswer, setMaskAnswer] = useState("Ask me anything about the lesson. I’ll use the approved Faceless material and point you to the next activity.");
   const [claimedCampaigns, setClaimedCampaigns] = useState<number[]>([]);
   const [username, setUsername] = useState("aanya");
-  const [contentStage, setContentStage] = useState<ContentStage>("empty");
-  const [contentName, setContentName] = useState("");
   const [launchMode, setLaunchMode] = useState<LaunchMode>("testnet");
 
   const ethWallet = "0x71F4...9A2C";
@@ -165,17 +163,6 @@ export default function OnchainLab() {
       setOnboarded(true);
       notify(`@${cleanUsername} linked to both classroom wallets`);
     }, 900);
-  }
-
-  function prepareContent(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    setContentName(file.name);
-    setContentStage("processing");
-    window.setTimeout(() => {
-      setContentStage("ready");
-      notify("Rough captions and three clip suggestions are ready");
-    }, 1500);
   }
 
   function claimFaucet() {
@@ -438,34 +425,28 @@ export default function OnchainLab() {
             </div>
           )}
 
-          {active === "campaigns" && (
+          {active === "tools" && (
             <div className="page-stack">
-              <section className="campaign-hero">
-                <div><span className="eyebrow">THE MAIN STUDENT MONETISATION TRACK</span><h2>Learn content.<br />Use it on a real mission.</h2><p>Learn to shoot, clip, script and edit—then choose whether to appear on camera, work faceless or help a partner acquire genuine users.</p><button className="primary" onClick={() => notify("Mask matched you with two beginner-friendly missions")}>Let Mask match me →</button></div>
-                <div className="campaign-steps"><span><b>1</b> Claim a campaign</span><span><b>2</b> Create and post</span><span><b>3</b> Get verified and paid</span></div>
-              </section>
-              <section className="content-lab card">
-                <div className="content-lab-copy">
-                  <span className="eyebrow">FACELESS CONTENT LAB</span>
-                  <h3>Upload once. Start with the useful cuts.</h3>
-                  <p>Faceless prepares a transcript, rough subtitles and suggested short clips. You choose the strongest version, then finish the creative edit on your phone.</p>
-                  <div className="content-pipeline" aria-label="Content workflow">
-                    <span><b>1</b>Shoot</span><i>→</i><span><b>2</b>Auto-prep</span><i>→</i><span><b>3</b>Choose</span><i>→</i><span><b>4</b>Polish</span><i>→</i><span><b>5</b>Submit</span>
-                  </div>
-                  <small className="prototype-note">Prototype: processing is simulated in this version. Production transcription, clip detection and rendered exports require the media-processing service.</small>
-                </div>
-                <div className={`content-workbench ${contentStage}`}>
-                  {contentStage === "empty" && <><span className="upload-mark">↑</span><strong>Upload a raw video</strong><small>MP4, MOV or WebM · vertical or horizontal</small><label className="upload-button">Choose video<input type="file" accept="video/mp4,video/quicktime,video/webm" onChange={prepareContent} /></label></>}
-                  {contentStage === "processing" && <><span className="processing-ring" /><strong>Preparing {contentName}</strong><small>Transcribing · finding hooks · trimming silence</small><div className="processing-bar"><i /></div></>}
-                  {contentStage === "ready" && <><div className="ready-head"><span>✓</span><div><strong>Auto-prep ready</strong><small>{contentName}</small></div><button onClick={() => setContentStage("empty")}>Replace</button></div><div className="output-list"><span><b>Transcript</b><em>Ready · editable</em></span><span><b>Subtitles</b><em>Clean style · 9:16 safe</em></span><span><b>3 clip ideas</b><em>Hook · core point · CTA</em></span></div><div className="clip-row"><button onClick={() => notify("Hook clip selected: 00:04–00:19")}>00:04–00:19 <b>Hook</b></button><button onClick={() => notify("Core clip selected: 00:24–00:43")}>00:24–00:43 <b>Core</b></button><button onClick={() => notify("CTA clip selected: 00:47–00:59")}>00:47–00:59 <b>CTA</b></button></div><button className="handoff-button" onClick={() => notify("Mobile handoff prepared for Instagram Edits")}>Export rough cut for Instagram Edits →</button></>}
-                </div>
-              </section>
-              <section className="hybrid-edit-grid">
-                <article className="card"><span>AUTO PREP</span><h3>Let Faceless do the repetitive work.</h3><p>Transcript, first-pass captions, silence removal, hook detection and rough vertical cuts.</p></article>
-                <article className="card"><span>CREATIVE FINISH</span><h3>Learn the craft inside Instagram Edits.</h3><p>Students control pacing, music, caption style, native effects and the final publish. That editing judgment becomes a monetisable skill.</p></article>
+              <section className="tools-hero">
+                <div><span className="eyebrow">CREATOR TOOLS</span><h2>Learn the craft.<br />Make better content.</h2><p>Simple, phone-first guidance for turning an idea or brief into content you can confidently publish.</p><button className="primary" onClick={() => setActive("mask")}>Plan with Mask →</button></div>
+                <div className="tools-flow" aria-label="Creator workflow"><span><b>01</b>Understand</span><span><b>02</b>Script</span><span><b>03</b>Shoot</span><span><b>04</b>Edit</span></div>
               </section>
               <div className="creator-school-head"><div><span className="eyebrow">CREATOR SCHOOL</span><h3>Learn the skill before taking the brief.</h3></div><span>Phone-first · Beginner-friendly</span></div>
               <div className="creator-tool-grid">{creatorTools.map((tool) => <article className="creator-tool card" key={tool.number}><span>{tool.number}</span><h3>{tool.title}</h3><p>{tool.copy}</p><button onClick={() => tool.number === "03" ? setActive("mask") : notify(`${tool.title} opened in guided mode`)}>{tool.action} →</button></article>)}</div>
+              <section className="editing-handoff">
+                <article className="card"><span>IN CAMPUS OS</span><h3>Prepare before you shoot.</h3><p>Understand the brief, choose a format, draft the hook and build a five-shot plan with Mask.</p></article>
+                <article className="card"><span>IN INSTAGRAM EDITS</span><h3>Finish on your phone.</h3><p>Trim the strongest takes, add readable captions, set the pacing and export the final vertical video.</p></article>
+              </section>
+              <section className="tools-next card"><div><span className="eyebrow">READY TO USE THE SKILL?</span><h3>Pick a real brief in Campaigns.</h3></div><button onClick={() => setActive("campaigns")}>Browse campaigns →</button></section>
+            </div>
+          )}
+
+          {active === "campaigns" && (
+            <div className="page-stack">
+              <section className="campaign-hero">
+                <div><span className="eyebrow">CAMPAIGNS</span><h2>Choose a brief.<br />Create. Get paid.</h2><p>Join creator, faceless, clipping or user-acquisition missions. Every brief stays clear, every submission is reviewed and approved work is paid manually.</p><div className="campaign-hero-actions"><button className="primary" onClick={() => notify("Mask matched you with two beginner-friendly missions")}>Find my campaign →</button><button className="secondary-light" onClick={() => setActive("tools")}>Learn creator skills</button></div></div>
+                <div className="campaign-steps"><span><b>1</b> Claim a campaign</span><span><b>2</b> Create and submit</span><span><b>3</b> Get approved and paid</span></div>
+              </section>
               <div className="campaign-toolbar"><div><button className="active">All missions</button><button>Creator</button><button>Faceless</button><button>Clipper</button><button>User acquisition</button></div><label>⌕<input placeholder="Search campaigns or brands…" aria-label="Search campaigns" /></label></div>
               <div className="campaign-grid">
                 {campaigns.map((campaign) => <article className={`campaign-card ${campaign.tone}`} key={campaign.id}>
@@ -527,7 +508,7 @@ export default function OnchainLab() {
           )}
         </div>
 
-        <nav className="mobile-nav" aria-label="Mobile navigation">{navItems.filter((item) => ["home", "learn", "mask", "create", "campaigns"].includes(item.id)).map((item) => <button key={item.id} className={active === item.id ? "active" : ""} onClick={() => setActive(item.id)}><span>{item.mark}</span>{item.id === "campaigns" ? "Earn" : item.label.split(" ")[0]}</button>)}</nav>
+        <nav className="mobile-nav" aria-label="Mobile navigation">{navItems.filter((item) => ["home", "learn", "mask", "tools", "campaigns"].includes(item.id)).map((item) => <button key={item.id} className={active === item.id ? "active" : ""} onClick={() => setActive(item.id)}><span>{item.mark}</span>{item.id === "tools" ? "Tools" : item.label.split(" ")[0]}</button>)}</nav>
       </section>
 
       {!onboarded && (

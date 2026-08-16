@@ -136,6 +136,7 @@ export default function OnchainLab() {
   const [maskQuestion, setMaskQuestion] = useState("");
   const [maskAnswer, setMaskAnswer] = useState("Ask me anything about the lesson. I’ll use the approved Faceless material and point you to the next activity.");
   const [claimedCampaigns, setClaimedCampaigns] = useState<number[]>([]);
+  const [username, setUsername] = useState("aanya");
   const [contentStage, setContentStage] = useState<ContentStage>("empty");
   const [contentName, setContentName] = useState("");
   const [launchMode, setLaunchMode] = useState<LaunchMode>("testnet");
@@ -154,11 +155,15 @@ export default function OnchainLab() {
   }
 
   function enterLab() {
+    const cleanUsername = username.trim().toLowerCase().replace(/^@/, "");
+    if (!/^[a-z][a-z0-9_]{2,23}$/.test(cleanUsername)) {
+      return notify("Choose 3–24 letters, numbers or underscores, starting with a letter");
+    }
     setLoading(true);
     window.setTimeout(() => {
       setLoading(false);
       setOnboarded(true);
-      notify("Ethereum and Solana classroom wallets created");
+      notify(`@${cleanUsername} linked to both classroom wallets`);
     }, 900);
   }
 
@@ -529,7 +534,7 @@ export default function OnchainLab() {
         <div className="onboarding-overlay">
           <div className="onboarding-card">
             <div className="onboarding-art"><div className="portal-ring one" /><div className="portal-ring two" /><MaskOrb /><span>ETHEREUM<br />+ SOLANA<br />CLASSROOM</span></div>
-            <div className="onboarding-copy"><span className="eyebrow">FACELESS CAMPUS OS</span><h2>Learn. Build. Play.<br />Create. Earn.</h2><p>One profile for 25 lessons, the real live-session Mask, Ethereum and Solana practice, project demos, games and creator campaigns.</p><button className="google-button" onClick={enterLab} disabled={loading}><span>G</span>{loading ? "Preparing both classroom wallets…" : "Continue with Google"}</button><button className="demo-link" onClick={() => setOnboarded(true)}>Explore the student demo</button><small>Prototype only · Google sign-in, wallets, campaign rewards and onchain actions are simulated.</small></div>
+            <div className="onboarding-copy"><span className="eyebrow">FACELESS CAMPUS OS</span><h2>Learn. Build. Play.<br />Create. Earn.</h2><p>One profile for 25 lessons, the real live-session Mask, Ethereum and Solana practice, project demos, games and creator campaigns.</p><label className="username-field"><span>CHOOSE YOUR CAMPUS USERNAME</span><div><b>@</b><input value={username} onChange={(event) => setUsername(event.target.value)} maxLength={24} autoComplete="username" aria-label="Campus username" /></div><small>Friends will use this name to send you classroom assets.</small></label><button className="google-button" onClick={enterLab} disabled={loading}><span>G</span>{loading ? "Preparing both classroom wallets…" : "Continue with Google"}</button><button className="demo-link" onClick={() => setOnboarded(true)}>Explore the student demo</button><small>Private pilot preview · production wallet activation will use Privy and never store student private keys.</small></div>
           </div>
         </div>
       )}

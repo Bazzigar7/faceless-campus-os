@@ -48,6 +48,7 @@ export default defineConfig(async () => {
     resolve: {
       alias: {
         pino: fileURLToPath(new URL("./lib/pino-browser-shim.ts", import.meta.url)),
+        buffer: fileURLToPath(new URL("./node_modules/buffer/index.js", import.meta.url)),
       },
     },
     server: isCodexSeatbeltSandbox

@@ -8,6 +8,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   const [launch] = await db.select().from(testnetLaunches).where(eq(testnetLaunches.id, id)).limit(1);
   if (!launch) return Response.json({ error: "Metadata not found" }, { status: 404 });
   const origin = new URL(request.url).origin;
+  const networkName = launch.network === "sepolia" ? "Sepolia" : "Solana Devnet";
   return Response.json({
     name: launch.name,
     description: launch.description,
@@ -16,14 +17,14 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     properties: {
       category: "image",
       standard: launch.standard.toUpperCase(),
-      network: "Sepolia testnet",
+      network: `${networkName} testnet`,
       creator: launch.creatorAddress,
       max_supply: launch.maxSupply,
       purpose: launch.purpose,
     },
     attributes: [
       { trait_type: "Campus", value: "Faceless" },
-      { trait_type: "Network", value: "Sepolia" },
+      { trait_type: "Network", value: networkName },
       { trait_type: "Edition Size", value: launch.maxSupply },
     ],
   }, { headers: { "cache-control": "public, max-age=300" } });

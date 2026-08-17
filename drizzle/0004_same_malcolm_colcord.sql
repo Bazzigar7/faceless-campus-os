@@ -1,0 +1,1 @@
+ALTER TABLE `testnet_launches` ADD `asset_address` text;

@@ -144,6 +144,7 @@ export const testnetLaunches = sqliteTable("testnet_launches", {
   deployTxHash: text("deploy_tx_hash"),
   contractAddress: text("contract_address"),
   mintTxHash: text("mint_tx_hash"),
+  assetAddress: text("asset_address"),
   errorMessage: text("error_message"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),

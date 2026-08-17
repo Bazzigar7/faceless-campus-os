@@ -29,6 +29,13 @@
       "when": 1786991747187,
       "tag": "0003_true_silver_sable",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1786997199969,
+      "tag": "0004_same_malcolm_colcord",
+      "breakpoints": true
     }
   ]
 }

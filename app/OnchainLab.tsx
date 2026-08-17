@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
-import { useIdentityToken, usePrivy, useSendTransaction as useSendEthereumTransaction, useUser, useWallets as useEthereumWallets } from "@privy-io/react-auth";
+import { getAccessToken, useIdentityToken, usePrivy, useSendTransaction as useSendEthereumTransaction, useUser, useWallets as useEthereumWallets } from "@privy-io/react-auth";
 import { useExportWallet as useExportSolanaWallet, useSignAndSendTransaction, useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
 import {
   address,
@@ -721,7 +721,7 @@ export default function OnchainLab() {
           (tx) => compileTransaction(tx),
           (tx) => new Uint8Array(getTransactionEncoder().encode(tx)),
         );
-        const { signature } = await sendSolanaTransaction({ transaction, wallet: solanaWallet, chain: "solana:devnet" });
+        const { signature } = await sendCampusSolanaTransaction(transaction);
         const hash = getBase58Decoder().decode(signature);
         setTransferReceipt({ chain: "solana", hash, username: recipient.username, amount: transferAmount, explorer: `https://explorer.solana.com/tx/${hash}?cluster=devnet` });
       }
@@ -826,6 +826,28 @@ export default function OnchainLab() {
       await new Promise((resolve) => window.setTimeout(resolve, 50));
     }
     return identityTokenRef.current && !identityTokenExpiresSoon(identityTokenRef.current, 0) ? identityTokenRef.current : null;
+  }
+
+  async function sendCampusSolanaTransaction(transaction: Uint8Array) {
+    if (!solanaWallet) throw new Error("Your Campus Solana wallet is unavailable");
+    if (!await getAccessToken()) throw new Error("Your Campus session expired. Refresh the page or sign in again—your wallets and work are safe.");
+    try {
+      return await sendSolanaTransaction({ transaction, wallet: solanaWallet, chain: "solana:devnet" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (!/failed to connect to wallet/i.test(message)) throw error;
+      await refreshUser();
+      if (!await getAccessToken()) throw new Error("Your Campus session expired. Refresh the page or sign in again—your wallets and work are safe.");
+      await new Promise((resolve) => window.setTimeout(resolve, 200));
+      try {
+        return await sendSolanaTransaction({ transaction, wallet: solanaWallet, chain: "solana:devnet" });
+      } catch (retryError) {
+        if (retryError instanceof Error && /failed to connect to wallet/i.test(retryError.message)) {
+          throw new Error("The Campus wallet could not reconnect. Refresh this page once, then press Mint first edition again.");
+        }
+        throw retryError;
+      }
+    }
   }
 
   async function askMask(event: React.FormEvent<HTMLFormElement>) {
@@ -1070,7 +1092,7 @@ export default function OnchainLab() {
       const serialized = umi.transactions.serialize(transaction);
 
       setLaunchTransactionStatus("awaiting_signature");
-      const { signature } = await sendSolanaTransaction({ transaction: serialized, wallet: solanaWallet, chain: "solana:devnet" });
+      const { signature } = await sendCampusSolanaTransaction(serialized);
       const hash = getBase58Decoder().decode(signature);
       setLaunchTransactionStatus("confirming");
       await waitForSolanaConfirmation(hash);
@@ -1135,7 +1157,7 @@ export default function OnchainLab() {
       let transaction = await builder.buildWithLatestBlockhash(umi);
       transaction = await assetSigner.signTransaction(transaction);
       const serialized = umi.transactions.serialize(transaction);
-      const { signature } = await sendSolanaTransaction({ transaction: serialized, wallet: solanaWallet, chain: "solana:devnet" });
+      const { signature } = await sendCampusSolanaTransaction(serialized);
       const hash = getBase58Decoder().decode(signature);
       await waitForSolanaConfirmation(hash);
       const assetAddress = assetSigner.publicKey.toString();
@@ -1472,7 +1494,7 @@ export default function OnchainLab() {
                   {!launchDeployment && <button disabled={["uploading", "awaiting_signature", "confirming"].includes(launchTransactionStatus)} onClick={deployLaunchCollection}>{launchTransactionStatus === "uploading" ? "Securing artwork…" : launchTransactionStatus === "awaiting_signature" ? "Check your wallet…" : launchTransactionStatus === "confirming" ? `Waiting for ${launchDraft.chain === "ethereum" ? "Sepolia" : "Solana Devnet"}…` : launchDraft.chain === "ethereum" ? "Approve Sepolia deployment →" : "Approve Solana collection →"}</button>}
                   {launchDeployment && <div className="launch-receipt-links"><a href={launchDeployment.chain === "ethereum" ? `https://sepolia.etherscan.io/address/${launchDeployment.contractAddress}` : `https://core.metaplex.com/explorer/${launchDeployment.contractAddress}?env=devnet`} target="_blank" rel="noreferrer">View {launchDeployment.chain === "ethereum" ? "contract" : "collection"} ↗</a><a href={launchDeployment.chain === "ethereum" ? `https://sepolia.etherscan.io/tx/${launchDeployment.deployHash}` : `https://explorer.solana.com/tx/${launchDeployment.deployHash}?cluster=devnet`} target="_blank" rel="noreferrer">Deployment receipt ↗</a><a href={launchDeployment.metadataUrl} target="_blank" rel="noreferrer">NFT metadata ↗</a></div>}
                   {launchDeployment && <div className="launch-mint-step"><div><span>{launchTransactionStatus === "minted" ? "✓" : "2"}</span><section><b>Step 2 · Mint the first NFT</b><p>{launchTransactionStatus === "minted" ? `1 of ${launchDraft.supply} editions is now minted to your Campus wallet.` : `${launchDeployment.chain === "ethereum" ? "The contract" : "The collection"} exists, but no NFT has been minted yet. Mint edition #1 of ${launchDraft.supply}.`}</p></section></div>{launchTransactionStatus !== "minted" && <button disabled={launchTransactionStatus === "minting"} onClick={mintFirstLaunchEdition}>{launchTransactionStatus === "minting" ? "Confirming first mint…" : "Mint first edition →"}</button>}{launchDeployment.assetAddress && <a href={`https://core.metaplex.com/explorer/${launchDeployment.assetAddress}?env=devnet`} target="_blank" rel="noreferrer">View NFT ↗</a>}{launchDeployment.mintHash && <a href={launchDeployment.chain === "ethereum" ? `https://sepolia.etherscan.io/tx/${launchDeployment.mintHash}` : `https://explorer.solana.com/tx/${launchDeployment.mintHash}?cluster=devnet`} target="_blank" rel="noreferrer">View mint receipt ↗</a>}</div>}
-                  {launchTransactionError && <p className="launch-transaction-error">{launchTransactionError} Check that the Campus wallet has enough {launchDraft.chain === "ethereum" ? "Sepolia ETH" : "Devnet SOL"} for the network fee, then try again.</p>}
+                  {launchTransactionError && <p className="launch-transaction-error">{launchTransactionError} {!/wallet|session/i.test(launchTransactionError) && <>Check that the Campus wallet has enough {launchDraft.chain === "ethereum" ? "Sepolia ETH" : "Devnet SOL"} for the network fee, then try again.</>}</p>}
                   <small>Your wallet—not Mask—always gives the final approval. Testnet assets have no monetary value.</small>
                 </div>}
               </section>}

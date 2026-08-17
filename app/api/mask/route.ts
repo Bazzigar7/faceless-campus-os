@@ -109,6 +109,7 @@ export async function POST(request: Request) {
       question?: string;
       history?: ChatMessage[];
       launchProgress?: LaunchProgress | null;
+      artwork?: { dataUrl?: string; name?: string; type?: string; size?: number; rightsConfirmed?: boolean } | null;
       lesson?: { course?: string; title?: string; summary?: string };
     };
     const question = String(body.question || "").trim().slice(0, 1_500);
@@ -119,6 +120,11 @@ export async function POST(request: Request) {
       return text ? [{ role: message.role, content: text }] : [];
     });
     const suppliedProgress = body.launchProgress && typeof body.launchProgress === "object" ? body.launchProgress : null;
+    const artworkDataUrl = String(body.artwork?.dataUrl || "");
+    const hasArtwork = /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(artworkDataUrl);
+    if (artworkDataUrl && !hasArtwork) return Response.json({ error: "Upload a PNG, JPG or WebP image" }, { status: 400 });
+    if (artworkDataUrl.length > 5_600_000) return Response.json({ error: "Keep artwork under 4 MB" }, { status: 413 });
+    if (hasArtwork && !body.artwork?.rightsConfirmed) return Response.json({ error: "Confirm that you created the artwork or have permission to use it" }, { status: 400 });
     const launchStart = /(?:\b(?:nft|eft)\b.*collection|launch.*(?:nft|collection|token)|create.*(?:nft|collection|token))/i.test(question);
     const launchActive = Boolean(suppliedProgress || launchStart);
     const lessonTitle = String(body.lesson?.title || "").slice(0, 120);
@@ -184,12 +190,17 @@ For a launch request, explain that Campus OS can prepare it on Sepolia or Solana
 For an NFT collection collect: chain, artwork readiness, name, description, supply, free-or-paid mint price, royalty percentage, and purpose. A symbol is technical metadata here, not a marketplace requirement: never make the student stop to choose one. If absent, automatically derive a sensible 3–5 character uppercase symbol from the collection name.
 For a token collect: chain, name, symbol, description and purpose, supply, decimals, and whether mint and freeze authority should be kept for learning or revoked for fixed supply. Explain authority tradeoffs plainly.
 Before asking anything, audit the persistent progress and the full conversation. Never ask again for a non-null value unless the student explicitly corrects it. If the student asks a side question, answer it and then continue with the next missing requirement. When the student says “make your own”, “you decide” or similar, choose a sensible learning-focused value and save it rather than asking again.
+When artwork is attached, inspect it briefly, acknowledge what is visibly present without inventing identity or ownership, set artworkReady to true, and suggest metadata only when useful. The student has confirmed they created it or have permission to use it; do not claim that this confirmation independently proves copyright.
 On every active launch turn, call update_launch_progress. Merge the newest answer into the supplied progress; never erase an existing value without an explicit correction. Mark ready only when all relevant values are present. Use null for fields that do not apply. The student's connected Campus wallet is the default creator and proceeds wallet. All launches in this first workflow are testnet.
 Persistent launch progress supplied by Campus OS: ${JSON.stringify(suppliedProgress)}
+Attached artwork: ${hasArtwork ? `${String(body.artwork?.name || "artwork").slice(0, 120)} (student rights confirmation received)` : "none on this turn"}.
 Student username: @${student.username}.
 ${curriculum}
 Current optional lesson context: ${course || "none"} — ${lessonTitle || "none"}. ${lessonSummary || ""}`,
-        input: [...history, { role: "user", content: question }],
+        input: [...history, { role: "user", content: hasArtwork ? [
+          { type: "input_text", text: question },
+          { type: "input_image", image_url: artworkDataUrl, detail: "low" },
+        ] : question }],
       }),
     });
     const data = await upstream.json() as Record<string, unknown> & { error?: { message?: string } };

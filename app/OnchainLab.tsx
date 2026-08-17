@@ -72,7 +72,8 @@ type LaunchProgress = {
   authorityMode: LaunchDraft["authorityMode"];
   ready: boolean;
 };
-type MaskMessage = { role: "user" | "assistant"; text: string; citations?: MaskCitation[]; launchDraft?: LaunchDraft | null };
+type MaskArtwork = { dataUrl: string; name: string; type: string; size: number };
+type MaskMessage = { role: "user" | "assistant"; text: string; image?: string; imageName?: string; citations?: MaskCitation[]; launchDraft?: LaunchDraft | null };
 
 type Drop = {
   id: number;
@@ -221,6 +222,9 @@ export default function OnchainLab() {
   const [selectedCourse, setSelectedCourse] = useState<Course>("ethereum");
   const [selectedLesson, setSelectedLesson] = useState<Lesson>(ethereumLessons[1]);
   const [maskQuestion, setMaskQuestion] = useState("");
+  const [maskArtwork, setMaskArtwork] = useState<MaskArtwork | null>(null);
+  const [launchArtwork, setLaunchArtwork] = useState<MaskArtwork | null>(null);
+  const [maskArtworkRights, setMaskArtworkRights] = useState(false);
   const [maskMessages, setMaskMessages] = useState<MaskMessage[]>([{ role: "assistant", text: "Ask me anything. If it connects to a Faceless lesson, I’ll use the approved material. If it doesn’t, I’ll answer it normally." }]);
   const [maskBusy, setMaskBusy] = useState(false);
   const [maskLaunchProgress, setMaskLaunchProgress] = useState<LaunchProgress | null>(null);
@@ -685,14 +689,16 @@ export default function OnchainLab() {
 
   async function askMask(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const question = maskQuestion.trim();
+    const question = maskQuestion.trim() || (maskArtwork ? "I’ve attached my artwork for the NFT collection. Inspect it and continue the launch setup." : "");
     if (!question || maskBusy) return;
     if (!identityToken) return notify("Sign in to ask the live Mask");
+    if (maskArtwork && !maskArtworkRights) return notify("Confirm that you created the artwork or have permission to use it");
     const startingNewLaunch = /(?:help me launch|i want to launch|start.*launch)/i.test(question) && maskLaunchProgress?.ready;
     const activeLaunchProgress = startingNewLaunch ? null : maskLaunchProgress;
     if (startingNewLaunch) setMaskLaunchProgress(null);
-    const previous = maskMessages.slice(-30);
-    setMaskMessages((current) => [...current, { role: "user", text: question }]);
+    const previous = maskMessages.slice(-30).map(({ role, text }) => ({ role, text }));
+    const submittedArtwork = maskArtwork;
+    setMaskMessages((current) => [...current, { role: "user", text: question, image: submittedArtwork?.dataUrl, imageName: submittedArtwork?.name }]);
     setMaskQuestion("");
     setMaskBusy(true);
     try {
@@ -703,12 +709,19 @@ export default function OnchainLab() {
           question,
           history: previous,
           launchProgress: activeLaunchProgress,
+          artwork: submittedArtwork ? { ...submittedArtwork, rightsConfirmed: true } : null,
           lesson: { course: selectedLesson.course, title: selectedLesson.title, summary: selectedLesson.copy },
         }),
       });
       const result = await response.json() as { answer?: string; citations?: MaskCitation[]; launchDraft?: LaunchDraft | null; launchProgress?: LaunchProgress | null; error?: string };
       if (!response.ok || !result.answer) throw new Error(result.error || "Mask could not answer right now");
       if (result.launchProgress) setMaskLaunchProgress(result.launchProgress);
+      if (submittedArtwork) {
+        setLaunchArtwork(submittedArtwork);
+        setArtPreview(submittedArtwork.dataUrl);
+        setMaskArtwork(null);
+        setMaskArtworkRights(false);
+      }
       setMaskMessages((current) => [...current, { role: "assistant", text: result.answer!, citations: result.citations, launchDraft: result.launchDraft }]);
     } catch (error) {
       setMaskMessages((current) => [...current, { role: "assistant", text: error instanceof Error ? error.message : "I couldn’t answer that right now. Please try again." }]);
@@ -717,8 +730,25 @@ export default function OnchainLab() {
     }
   }
 
+  function attachMaskArtwork(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) return notify("Upload a PNG, JPG or WebP image");
+    if (file.size > 4 * 1024 * 1024) return notify("Keep artwork under 4 MB");
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") return notify("Artwork could not be read");
+      setMaskArtwork({ dataUrl: reader.result, name: file.name, type: file.type, size: file.size });
+      setMaskArtworkRights(false);
+    };
+    reader.onerror = () => notify("Artwork could not be read");
+    reader.readAsDataURL(file);
+  }
+
   function openLaunchDraft(draft: LaunchDraft) {
     setLaunchDraft(draft);
+    if (launchArtwork) setArtPreview(launchArtwork.dataUrl);
     setActiveChain(draft.chain);
     setLaunchMode("testnet");
     setLaunchReviewReady(false);
@@ -889,10 +919,11 @@ export default function OnchainLab() {
                 <div className="mask-context"><span><b>HYBRID ANSWER MODE</b><small>GENERAL KNOWLEDGE · FACELESS CURRICULUM · CURRENT WEB WHEN NEEDED</small></span><button onClick={() => setActive("learn")}>Optional context: {selectedLesson.title} ↗</button></div>
                 <div className="mask-conversation" aria-live="polite">{maskMessages.map((message, index) => <div key={`${message.role}-${index}`} className={`chat-answer ${message.role}`}>
                   {message.role === "assistant" ? <MaskOrb compact /> : <span className="student-chat-mark">{initials}</span>}
-                  <div><small>{message.role === "assistant" ? "MASK" : "YOU"}</small><p>{message.text}</p>{message.citations?.length ? <div className="mask-citations">{message.citations.map((citation) => <a key={citation.url} href={citation.url} target="_blank" rel="noreferrer">{citation.title} ↗</a>)}</div> : null}{message.launchDraft ? <button className="mask-launch-card" onClick={() => openLaunchDraft(message.launchDraft!)}><span><b>{message.launchDraft.assetType === "nft_collection" ? "NFT COLLECTION" : "TOKEN"} · {message.launchDraft.chain === "ethereum" ? "SEPOLIA" : "SOLANA DEVNET"}</b><strong>{message.launchDraft.name} ({message.launchDraft.symbol})</strong><small>{message.launchDraft.supply.toLocaleString()} supply · Review before anything is signed</small></span><em>Open in Launchpad →</em></button> : null}</div>
+                  <div><small>{message.role === "assistant" ? "MASK" : "YOU"}</small>{message.image ? <figure className="mask-message-art"><img src={message.image} alt="Artwork uploaded by the student" /><figcaption>{message.imageName}</figcaption></figure> : null}<p>{message.text}</p>{message.citations?.length ? <div className="mask-citations">{message.citations.map((citation) => <a key={citation.url} href={citation.url} target="_blank" rel="noreferrer">{citation.title} ↗</a>)}</div> : null}{message.launchDraft ? <button className="mask-launch-card" onClick={() => openLaunchDraft(message.launchDraft!)}><span><b>{message.launchDraft.assetType === "nft_collection" ? "NFT COLLECTION" : "TOKEN"} · {message.launchDraft.chain === "ethereum" ? "SEPOLIA" : "SOLANA DEVNET"}</b><strong>{message.launchDraft.name} ({message.launchDraft.symbol})</strong><small>{message.launchDraft.supply.toLocaleString()} supply · Review before anything is signed</small></span><em>Open in Launchpad →</em></button> : null}</div>
                 </div>)}{maskBusy && <div className="chat-answer assistant thinking"><MaskOrb compact /><div><small>MASK</small><p>Thinking…</p></div></div>}</div>
                 <div className="prompt-chips">{["Help me launch an NFT collection", "Help me launch a token", "Explain gas simply"].map((prompt) => <button key={prompt} onClick={() => setMaskQuestion(prompt)}>{prompt}</button>)}</div>
-                <form className="mask-form" onSubmit={askMask}><input value={maskQuestion} onChange={(event) => setMaskQuestion(event.target.value)} placeholder="Ask Mask anything…" aria-label="Question for Mask" maxLength={1500} /><button type="submit" disabled={maskBusy}>{maskBusy ? "Thinking…" : "Ask Mask →"}</button></form>
+                {maskArtwork && <div className="mask-art-attachment"><img src={maskArtwork.dataUrl} alt="Artwork ready to attach" /><div><b>{maskArtwork.name}</b><small>{(maskArtwork.size / 1024 / 1024).toFixed(2)} MB · Ready for Mask</small><label><input type="checkbox" checked={maskArtworkRights} onChange={(event) => setMaskArtworkRights(event.target.checked)} /> I created this artwork or have permission to use it.</label></div><button type="button" onClick={() => { setMaskArtwork(null); setMaskArtworkRights(false); }} aria-label="Remove attached artwork">×</button></div>}
+                <form className="mask-form" onSubmit={askMask}><label className="mask-upload-button" title="Attach artwork"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={attachMaskArtwork} /><span>＋</span><small>Art</small></label><input value={maskQuestion} onChange={(event) => setMaskQuestion(event.target.value)} placeholder={maskArtwork ? "Add a note for Mask (optional)…" : "Ask Mask anything…"} aria-label="Question for Mask" maxLength={1500} /><button type="submit" disabled={maskBusy}>{maskBusy ? "Thinking…" : maskArtwork ? "Send artwork →" : "Ask Mask →"}</button></form>
                 <small className="prototype-note">Mask can explain and guide, but never signs wallet transactions or guarantees financial outcomes.</small>
               </section>
               <section className="mask-tools"><article><span>01</span><b>Understand</b><p>Explain the concept using the lesson you are watching.</p></article><article><span>02</span><b>Create</b><p>Turn the concept into a safe testnet activity.</p></article><article><span>03</span><b>Campaign</b><p>Convert a partner brief into a checklist, hook and script.</p></article></section>
@@ -1025,6 +1056,7 @@ export default function OnchainLab() {
               <section className="launch-hero"><div><span className="eyebrow">STUDENT LAUNCHPAD · ETHEREUM + SOLANA</span><h2>Practise safely.<br />Launch when ready.</h2><p>Original student work begins on testnet. Mainnet publishing unlocks only after a successful practice launch and educator review.</p></div><img src="/faceless-cast.png" alt="Faceless character cast" /></section>
               {launchDraft && launchMode === "testnet" && <section className="mask-launch-studio card">
                 <div className="launch-studio-head"><div><span className="eyebrow">PREPARED WITH MASK</span><h3>Review your {launchDraft.assetType === "nft_collection" ? "NFT collection" : "token"}</h3><p>Mask filled this from your conversation. You can change anything before the wallet review.</p></div><span className="launch-network">{launchDraft.chain === "ethereum" ? "Ξ SEPOLIA" : "S SOLANA DEVNET"}</span></div>
+                {launchDraft.assetType === "nft_collection" && artPreview && <div className="launch-artwork-preview"><img src={artPreview} alt="Collection artwork uploaded through Mask" /><div><span className="eyebrow">COLLECTION ARTWORK</span><b>{launchArtwork?.name ?? "Uploaded artwork"}</b><p>Carried securely from your Mask conversation. Permanent storage is added before the real mint transaction is prepared.</p></div><button onClick={() => setActive("mask")}>Change in Mask →</button></div>}
                 <form className="launch-review-form" onSubmit={prepareLaunchApproval}>
                   <div className="form-row"><label>Name<input required value={launchDraft.name} onChange={(event) => updateLaunchDraft("name", event.target.value)} /></label><label>Symbol<input required value={launchDraft.symbol} maxLength={10} onChange={(event) => updateLaunchDraft("symbol", event.target.value.toUpperCase())} /></label></div>
                   <label>Description<textarea required value={launchDraft.description} onChange={(event) => updateLaunchDraft("description", event.target.value)} /></label>

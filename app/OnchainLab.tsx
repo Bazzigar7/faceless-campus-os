@@ -43,7 +43,21 @@ type LearningState = {
   cohort?: { activeStudents: number; lessonsCompleted: number; lessonsInProgress: number; completionRate: number; courses: Array<{ course: Course; completed: number }> };
 };
 type MaskCitation = { title: string; url: string };
-type MaskMessage = { role: "user" | "assistant"; text: string; citations?: MaskCitation[] };
+type LaunchDraft = {
+  assetType: "nft_collection" | "token";
+  chain: Chain;
+  name: string;
+  symbol: string;
+  description: string;
+  supply: number;
+  mintPrice: string | null;
+  royaltyPercent: number | null;
+  decimals: number | null;
+  purpose: string;
+  artworkReady: boolean | null;
+  authorityMode: "keep" | "revoke" | null;
+};
+type MaskMessage = { role: "user" | "assistant"; text: string; citations?: MaskCitation[]; launchDraft?: LaunchDraft | null };
 
 type Drop = {
   id: number;
@@ -194,6 +208,8 @@ export default function OnchainLab() {
   const [maskQuestion, setMaskQuestion] = useState("");
   const [maskMessages, setMaskMessages] = useState<MaskMessage[]>([{ role: "assistant", text: "Ask me anything. If it connects to a Faceless lesson, I’ll use the approved material. If it doesn’t, I’ll answer it normally." }]);
   const [maskBusy, setMaskBusy] = useState(false);
+  const [launchDraft, setLaunchDraft] = useState<LaunchDraft | null>(null);
+  const [launchReviewReady, setLaunchReviewReady] = useState(false);
   const [claimedCampaigns, setClaimedCampaigns] = useState<number[]>([]);
   const [username, setUsername] = useState("aanya");
   const [campusUsername, setCampusUsername] = useState("");
@@ -670,14 +686,35 @@ export default function OnchainLab() {
           lesson: { course: selectedLesson.course, title: selectedLesson.title, summary: selectedLesson.copy },
         }),
       });
-      const result = await response.json() as { answer?: string; citations?: MaskCitation[]; error?: string };
+      const result = await response.json() as { answer?: string; citations?: MaskCitation[]; launchDraft?: LaunchDraft | null; error?: string };
       if (!response.ok || !result.answer) throw new Error(result.error || "Mask could not answer right now");
-      setMaskMessages((current) => [...current, { role: "assistant", text: result.answer!, citations: result.citations }]);
+      setMaskMessages((current) => [...current, { role: "assistant", text: result.answer!, citations: result.citations, launchDraft: result.launchDraft }]);
     } catch (error) {
       setMaskMessages((current) => [...current, { role: "assistant", text: error instanceof Error ? error.message : "I couldn’t answer that right now. Please try again." }]);
     } finally {
       setMaskBusy(false);
     }
+  }
+
+  function openLaunchDraft(draft: LaunchDraft) {
+    setLaunchDraft(draft);
+    setActiveChain(draft.chain);
+    setLaunchMode("testnet");
+    setLaunchReviewReady(false);
+    setActive("launchpad");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function updateLaunchDraft<K extends keyof LaunchDraft>(key: K, value: LaunchDraft[K]) {
+    setLaunchDraft((current) => current ? { ...current, [key]: value } : current);
+    setLaunchReviewReady(false);
+  }
+
+  function prepareLaunchApproval(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!launchDraft) return;
+    setLaunchReviewReady(true);
+    notify("Launch review ready — your wallet has not signed anything yet");
   }
 
   function claimCampaign(id: number) {
@@ -831,9 +868,9 @@ export default function OnchainLab() {
                 <div className="mask-context"><span><b>HYBRID ANSWER MODE</b><small>GENERAL KNOWLEDGE · FACELESS CURRICULUM · CURRENT WEB WHEN NEEDED</small></span><button onClick={() => setActive("learn")}>Optional context: {selectedLesson.title} ↗</button></div>
                 <div className="mask-conversation" aria-live="polite">{maskMessages.map((message, index) => <div key={`${message.role}-${index}`} className={`chat-answer ${message.role}`}>
                   {message.role === "assistant" ? <MaskOrb compact /> : <span className="student-chat-mark">{initials}</span>}
-                  <div><small>{message.role === "assistant" ? "MASK" : "YOU"}</small><p>{message.text}</p>{message.citations?.length ? <div className="mask-citations">{message.citations.map((citation) => <a key={citation.url} href={citation.url} target="_blank" rel="noreferrer">{citation.title} ↗</a>)}</div> : null}</div>
+                  <div><small>{message.role === "assistant" ? "MASK" : "YOU"}</small><p>{message.text}</p>{message.citations?.length ? <div className="mask-citations">{message.citations.map((citation) => <a key={citation.url} href={citation.url} target="_blank" rel="noreferrer">{citation.title} ↗</a>)}</div> : null}{message.launchDraft ? <button className="mask-launch-card" onClick={() => openLaunchDraft(message.launchDraft!)}><span><b>{message.launchDraft.assetType === "nft_collection" ? "NFT COLLECTION" : "TOKEN"} · {message.launchDraft.chain === "ethereum" ? "SEPOLIA" : "SOLANA DEVNET"}</b><strong>{message.launchDraft.name} ({message.launchDraft.symbol})</strong><small>{message.launchDraft.supply.toLocaleString()} supply · Review before anything is signed</small></span><em>Open in Launchpad →</em></button> : null}</div>
                 </div>)}{maskBusy && <div className="chat-answer assistant thinking"><MaskOrb compact /><div><small>MASK</small><p>Thinking…</p></div></div>}</div>
-                <div className="prompt-chips">{["Explain gas simply", "Help me plan a Reel", "What happened in the news today?"].map((prompt) => <button key={prompt} onClick={() => setMaskQuestion(prompt)}>{prompt}</button>)}</div>
+                <div className="prompt-chips">{["Help me launch an NFT collection", "Help me launch a token", "Explain gas simply"].map((prompt) => <button key={prompt} onClick={() => setMaskQuestion(prompt)}>{prompt}</button>)}</div>
                 <form className="mask-form" onSubmit={askMask}><input value={maskQuestion} onChange={(event) => setMaskQuestion(event.target.value)} placeholder="Ask Mask anything…" aria-label="Question for Mask" maxLength={1500} /><button type="submit" disabled={maskBusy}>{maskBusy ? "Thinking…" : "Ask Mask →"}</button></form>
                 <small className="prototype-note">Mask can explain and guide, but never signs wallet transactions or guarantees financial outcomes.</small>
               </section>
@@ -965,6 +1002,17 @@ export default function OnchainLab() {
           {active === "launchpad" && (
             <div className="page-stack">
               <section className="launch-hero"><div><span className="eyebrow">STUDENT LAUNCHPAD · ETHEREUM + SOLANA</span><h2>Practise safely.<br />Launch when ready.</h2><p>Original student work begins on testnet. Mainnet publishing unlocks only after a successful practice launch and educator review.</p></div><img src="/faceless-cast.png" alt="Faceless character cast" /></section>
+              {launchDraft && launchMode === "testnet" && <section className="mask-launch-studio card">
+                <div className="launch-studio-head"><div><span className="eyebrow">PREPARED WITH MASK</span><h3>Review your {launchDraft.assetType === "nft_collection" ? "NFT collection" : "token"}</h3><p>Mask filled this from your conversation. You can change anything before the wallet review.</p></div><span className="launch-network">{launchDraft.chain === "ethereum" ? "Ξ SEPOLIA" : "S SOLANA DEVNET"}</span></div>
+                <form className="launch-review-form" onSubmit={prepareLaunchApproval}>
+                  <div className="form-row"><label>Name<input required value={launchDraft.name} onChange={(event) => updateLaunchDraft("name", event.target.value)} /></label><label>Symbol<input required value={launchDraft.symbol} maxLength={10} onChange={(event) => updateLaunchDraft("symbol", event.target.value.toUpperCase())} /></label></div>
+                  <label>Description<textarea required value={launchDraft.description} onChange={(event) => updateLaunchDraft("description", event.target.value)} /></label>
+                  <div className="form-row"><label>Total supply<input required type="number" min="1" value={launchDraft.supply} onChange={(event) => updateLaunchDraft("supply", Number(event.target.value))} /></label>{launchDraft.assetType === "nft_collection" ? <label>Mint price ({launchDraft.chain === "ethereum" ? "ETH" : "SOL"})<input required value={launchDraft.mintPrice ?? "0"} onChange={(event) => updateLaunchDraft("mintPrice", event.target.value)} /></label> : <label>Decimals<input required type="number" min="0" max={launchDraft.chain === "ethereum" ? 18 : 9} value={launchDraft.decimals ?? 9} onChange={(event) => updateLaunchDraft("decimals", Number(event.target.value))} /></label>}</div>
+                  <div className="launch-facts"><span><small>CREATOR WALLET</small><b>{launchDraft.chain === "ethereum" ? ethWallet : solWallet}</b></span><span><small>NETWORK</small><b>Testnet · no real value</b></span><span><small>{launchDraft.assetType === "nft_collection" ? "ROYALTY" : "MINT AUTHORITY"}</small><b>{launchDraft.assetType === "nft_collection" ? `${launchDraft.royaltyPercent ?? 0}%` : launchDraft.authorityMode === "revoke" ? "Revoke after mint" : "Keep for learning"}</b></span></div>
+                  <button className="primary full" type="submit">Prepare wallet review →</button>
+                </form>
+                {launchReviewReady && <div className="wallet-approval-panel"><div><span>✓</span><section><b>Draft verified</b><p>No transaction has been sent. The testnet deployment connector will create the exact transaction for your wallet to inspect and approve.</p></section></div><button onClick={() => notify("Deployment signing will unlock when the testnet contract adapters are connected")}>Continue to wallet approval →</button><small>Your wallet—not Mask—will always be the final signer.</small></div>}
+              </section>}
               <div className="launch-mode-switch" role="group" aria-label="Launch network"><button className={launchMode === "testnet" ? "active" : ""} onClick={() => setLaunchMode("testnet")}><b>Testnet studio</b><small>Free practice · classroom wallets</small></button><button className={launchMode === "mainnet" ? "active" : ""} onClick={() => setLaunchMode("mainnet")}><b>Mainnet launch</b><small>Real fees · educator-gated</small></button></div>
               {launchMode === "mainnet" && <section className="mainnet-gate card"><div><span className="gate-mark">✓</span><div><span className="eyebrow">SUPERVISED MAINNET PATH</span><h3>Prove the launch before paying real fees.</h3><p>Complete wallet safety, publish the collection on testnet, verify ownership and request an educator review. A final wallet confirmation is always required.</p></div></div><ol><li><span>1</span>Safety lesson</li><li><span>2</span>Test launch</li><li><span>3</span>Ownership check</li><li><span>4</span>Educator review</li></ol><button onClick={() => notify("Mainnet review request added to the educator queue")}>Request mainnet review →</button><small>No custodial mainnet wallet is created automatically. Students connect an external wallet and approve real fees themselves.</small></section>}
               <div className="market-toolbar"><div><button className="active">All work</button><button>1 of 1</button><button>Open editions</button><button>New collections</button></div><button className="sort">Newest first⌄</button></div>

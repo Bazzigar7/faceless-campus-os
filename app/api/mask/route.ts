@@ -2,6 +2,21 @@ import { faucetError, requireCampusUser } from "../../../lib/faucet-auth";
 
 type ChatMessage = { role: "user" | "assistant"; text: string };
 
+type LaunchDraft = {
+  assetType: "nft_collection" | "token";
+  chain: "ethereum" | "solana";
+  name: string;
+  symbol: string;
+  description: string;
+  supply: number;
+  mintPrice: string | null;
+  royaltyPercent: number | null;
+  decimals: number | null;
+  purpose: string;
+  artworkReady: boolean | null;
+  authorityMode: "keep" | "revoke" | null;
+};
+
 const curriculum = `
 Faceless Campus OS teaches 25 approved lessons across three courses.
 Blockchain basics: USDT, peer-to-peer exchange and escrow, and blockchain as a shared public record.
@@ -38,6 +53,21 @@ function responseCitations(data: Record<string, unknown>) {
   return Array.from(new Map(citations.map((item) => [item.url, item])).values()).slice(0, 5);
 }
 
+function responseLaunchDraft(data: Record<string, unknown>): LaunchDraft | null {
+  const output = Array.isArray(data.output) ? data.output : [];
+  for (const item of output) {
+    if (!item || typeof item !== "object") continue;
+    const call = item as { type?: string; name?: string; arguments?: string };
+    if (call.type !== "function_call" || call.name !== "prepare_launch" || !call.arguments) continue;
+    try {
+      return JSON.parse(call.arguments) as LaunchDraft;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 export async function POST(request: Request) {
   try {
     const { student } = await requireCampusUser(request);
@@ -68,7 +98,34 @@ export async function POST(request: Request) {
         reasoning: { effort: "low" },
         text: { verbosity: "low" },
         max_output_tokens: 700,
-        tools: [{ type: "web_search", search_context_size: "low" }],
+        tools: [
+          { type: "web_search", search_context_size: "low" },
+          {
+            type: "function",
+            name: "prepare_launch",
+            description: "Create a structured Campus Launchpad draft only after every required launch detail has been collected. Do not call this while information is missing.",
+            strict: true,
+            parameters: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                assetType: { type: "string", enum: ["nft_collection", "token"] },
+                chain: { type: "string", enum: ["ethereum", "solana"] },
+                name: { type: "string" },
+                symbol: { type: "string" },
+                description: { type: "string" },
+                supply: { type: "integer", minimum: 1 },
+                mintPrice: { type: ["string", "null"], description: "NFT mint price in the chain's native asset, or null for a token or free mint." },
+                royaltyPercent: { type: ["number", "null"], minimum: 0, maximum: 10 },
+                decimals: { type: ["integer", "null"], minimum: 0, maximum: 18 },
+                purpose: { type: "string" },
+                artworkReady: { type: ["boolean", "null"] },
+                authorityMode: { type: ["string", "null"], enum: ["keep", "revoke", null] },
+              },
+              required: ["assetType", "chain", "name", "symbol", "description", "supply", "mintPrice", "royaltyPercent", "decimals", "purpose", "artworkReady", "authorityMode"],
+            },
+          },
+        ],
         tool_choice: "auto",
         instructions: `You are Mask, the warm, sharp AI co-host inside Faceless Campus OS for adult college students.
 Answer any legitimate question directly; never force an unrelated question back to blockchain, crypto, Faceless lessons or a video.
@@ -77,6 +134,10 @@ Use web search only for information that may have changed, when the user asks fo
 Keep ordinary answers concise and conversational. Use an example when it makes the idea easier. Ask at most one useful follow-up question.
 For financial, medical or legal questions, give educational information, state uncertainty and encourage qualified help where appropriate. Never promise returns or tell students what token to buy.
 Never claim to sign, approve or execute wallet transactions. Classroom testnet assets have no real monetary value.
+You are also the conversational front door to the built-in Campus Launchpad. Never recommend an outside launchpad when a student asks to launch an NFT collection or token.
+For a launch request, explain that Campus OS can prepare it on Sepolia or Solana Devnet, then collect the requirements conversationally. Ask exactly one missing question at a time and remember answers already present in the conversation.
+For an NFT collection collect: chain, artwork readiness, name, symbol, description, supply, free-or-paid mint price, royalty percentage, and purpose. For a token collect: chain, name, symbol, description and purpose, supply, decimals, and whether mint and freeze authority should be kept for learning or revoked for fixed supply. Explain authority tradeoffs plainly.
+Only call prepare_launch after every relevant value is known. Use null for fields that do not apply. The student's connected Campus wallet is the default creator and proceeds wallet. All launches in this first workflow are testnet. After the tool is called, Campus OS will show the student an editable review and require explicit wallet approval.
 Student username: @${student.username}.
 ${curriculum}
 Current optional lesson context: ${course || "none"} — ${lessonTitle || "none"}. ${lessonSummary || ""}`,
@@ -85,9 +146,10 @@ Current optional lesson context: ${course || "none"} — ${lessonTitle || "none"
     });
     const data = await upstream.json() as Record<string, unknown> & { error?: { message?: string } };
     if (!upstream.ok) throw new Error(data.error?.message || "Mask could not answer right now");
-    const answer = responseText(data);
+    const launchDraft = responseLaunchDraft(data);
+    const answer = responseText(data) || (launchDraft ? `Your ${launchDraft.assetType === "nft_collection" ? "NFT collection" : "token"} draft is ready. Review every detail in the Campus Launchpad, then approve the testnet deployment with your own wallet.` : "");
     if (!answer) throw new Error("Mask could not answer right now");
-    return Response.json({ answer, citations: responseCitations(data) });
+    return Response.json({ answer, citations: responseCitations(data), launchDraft });
   } catch (error) {
     return faucetError(error);
   }

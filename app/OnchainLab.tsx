@@ -85,6 +85,23 @@ type LaunchDeployment = {
   contractAddress: Hex;
   mintHash?: Hex;
 };
+type WalletAssetView = "all" | "tokens" | "nfts";
+type WalletNft = {
+  id: string;
+  chain: Chain;
+  network: "sepolia" | "solana_devnet";
+  standard: string;
+  name: string;
+  symbol: string;
+  description: string;
+  quantity: number;
+  maxSupply: number;
+  contractAddress: string | null;
+  mintTransactionHash: string | null;
+  image: string;
+  metadata: string;
+  updatedAt: string;
+};
 
 type Drop = {
   id: number;
@@ -236,7 +253,6 @@ export default function OnchainLab() {
   const [toast, setToast] = useState("");
   const [drops, setDrops] = useState(initialDrops);
   const [claimedDrops, setClaimedDrops] = useState<number[]>([]);
-  const [created, setCreated] = useState(false);
   const [artPreview, setArtPreview] = useState<string | null>(null);
   const [selectedCourse, setSelectedCourse] = useState<Course>("ethereum");
   const [selectedLesson, setSelectedLesson] = useState<Lesson>(ethereumLessons[1]);
@@ -252,6 +268,10 @@ export default function OnchainLab() {
   const [launchTransactionStatus, setLaunchTransactionStatus] = useState<LaunchTransactionStatus>("idle");
   const [launchTransactionError, setLaunchTransactionError] = useState("");
   const [launchDeployment, setLaunchDeployment] = useState<LaunchDeployment | null>(null);
+  const [walletAssetView, setWalletAssetView] = useState<WalletAssetView>("all");
+  const [walletNfts, setWalletNfts] = useState<WalletNft[]>([]);
+  const [walletAssetsLoading, setWalletAssetsLoading] = useState(false);
+  const [walletAssetsError, setWalletAssetsError] = useState("");
   const [claimedCampaigns, setClaimedCampaigns] = useState<number[]>([]);
   const [username, setUsername] = useState("aanya");
   const [campusUsername, setCampusUsername] = useState("");
@@ -326,6 +346,7 @@ export default function OnchainLab() {
     if (!authenticated || !identityToken || profileStatus !== "ready") return;
     void loadFaucetState();
     void loadLearningState();
+    void loadWalletAssets();
   }, [authenticated, identityToken, profileStatus]);
 
   function notify(message: string) {
@@ -388,6 +409,22 @@ export default function OnchainLab() {
       }
     } catch {
       // Lessons stay available even if progress sync is briefly unavailable.
+    }
+  }
+
+  async function loadWalletAssets() {
+    if (!identityToken) return;
+    setWalletAssetsLoading(true);
+    setWalletAssetsError("");
+    try {
+      const response = await fetch("/api/launch", { headers: { "privy-id-token": identityToken } });
+      const result = await response.json() as { nfts?: WalletNft[]; error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Wallet assets are unavailable");
+      setWalletNfts(result.nfts ?? []);
+    } catch (error) {
+      setWalletAssetsError(error instanceof Error ? error.message : "Wallet assets are unavailable");
+    } finally {
+      setWalletAssetsLoading(false);
     }
   }
 
@@ -684,13 +721,43 @@ export default function OnchainLab() {
   function handleArt(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    setArtPreview(URL.createObjectURL(file));
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) return notify("Upload a PNG, JPG or WebP image");
+    if (file.size > 4 * 1024 * 1024) return notify("Keep artwork under 4 MB");
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") return notify("Artwork could not be read");
+      const artwork = { dataUrl: reader.result, name: file.name, type: file.type, size: file.size };
+      setLaunchArtwork(artwork);
+      setArtPreview(artwork.dataUrl);
+    };
+    reader.onerror = () => notify("Artwork could not be read");
+    reader.readAsDataURL(file);
   }
 
   function createCollection(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setCreated(true);
-    notify("Draft collection created in the Sepolia sandbox");
+    if (!launchArtwork) return notify("Upload the collection artwork first");
+    const data = new FormData(event.currentTarget);
+    const name = String(data.get("collectionName") || "").trim();
+    const description = String(data.get("creatorStory") || "").trim();
+    const symbol = String(data.get("symbol") || "").trim().toUpperCase();
+    const supply = Number(data.get("editionSize"));
+    if (!name || !description || !symbol || !Number.isInteger(supply) || supply < 1) return notify("Complete the collection details first");
+    openLaunchDraft({
+      assetType: "nft_collection",
+      chain: activeChain,
+      name,
+      symbol,
+      description,
+      supply,
+      mintPrice: "0",
+      royaltyPercent: 5,
+      decimals: null,
+      purpose: "Original student artwork",
+      artworkReady: true,
+      authorityMode: null,
+    });
+    notify("Testnet launch ready — no educator approval required");
   }
 
   function openLesson(lesson: Lesson) {
@@ -878,6 +945,7 @@ export default function OnchainLab() {
       await saveLaunchReceipt("record_mint", launchDeployment.launchId, hash as Hex);
       setLaunchDeployment((current) => current ? { ...current, mintHash: hash as Hex } : current);
       setLaunchTransactionStatus("minted");
+      await loadWalletAssets();
       notify("Your first edition was minted on Sepolia");
       window.setTimeout(() => void refreshBalances(), 1200);
     } catch (error) {
@@ -1101,10 +1169,19 @@ export default function OnchainLab() {
                 </div>
               </section>}
               {authenticated && <section className="wallet-control card"><div><span className="eyebrow">YOU CONTROL YOUR WALLETS</span><h3>Connect or export whenever you need.</h3><p>Faceless never receives or stores your private keys. Export opens Privy’s protected wallet screen.</p></div><div><button onClick={() => linkWallet({ walletChainType: "ethereum-and-solana" })}>Connect MetaMask or Phantom</button><button disabled={!ethereumWallet} onClick={() => exportWallet("ethereum")}>Export Ethereum</button><button disabled={!solanaWallet} onClick={() => exportWallet("solana")}>Export Solana</button></div></section>}
-              <div className="asset-layout">
-                <section className="card asset-section"><div className="section-head"><span><b>COLLECTIBLES</b><small>2 classroom assets</small></span></div><div className="asset-grid"><div className="asset-tile"><img src="/faceless-purple.png" alt="Purple Faceless classroom head" /><span><b>Ethereum Lab Pass</b><small>ERC-1155 · Testnet</small></span></div>{headClaimed ? <div className="asset-tile"><img src="/faceless-blue.png" alt="Blue Faceless classroom head" /><span><b>Faceless Head #084</b><small>Claimed today</small></span></div> : <button className="asset-empty" onClick={claimHead}>+ Claim your Faceless head</button>}</div></section>
-                <section className="card tx-section"><div className="section-head"><span><b>MULTICHAIN ACTIVITY</b><small>Sepolia + Solana Devnet</small></span></div>{["Minted Ethereum Lab Pass", "Created Solana Devnet wallet", "Created Ethereum wallet"].map((label, index) => <div className="tx-row" key={label}><span className={index === 0 ? "tx-dot violet" : "tx-dot"} /><span><b>{label}</b><small>{index + 7} minutes ago</small></span><code>{index === 1 ? "8maZ...xQ7P" : `0x${index + 3}a...${index}f9`}</code></div>)}</section>
-              </div>
+              <section className="wallet-assets card">
+                <div className="wallet-assets-head"><div><span className="eyebrow">YOUR ONCHAIN ITEMS</span><h3>Tokens, NFTs and everything you launch.</h3><p>Campus OS shows test funds and assets created through the launchpad in one place.</p></div><button disabled={walletAssetsLoading} onClick={() => void loadWalletAssets()}>{walletAssetsLoading ? "Refreshing…" : "Refresh assets ↻"}</button></div>
+                <div className="wallet-asset-tabs" role="tablist" aria-label="Wallet asset type">{(["all", "tokens", "nfts"] as WalletAssetView[]).map((view) => <button role="tab" aria-selected={walletAssetView === view} className={walletAssetView === view ? "active" : ""} key={view} onClick={() => setWalletAssetView(view)}>{view === "all" ? "All assets" : view === "tokens" ? "Tokens" : "NFTs"}</button>)}</div>
+                {(walletAssetView === "all" || walletAssetView === "tokens") && <div className="wallet-token-grid">
+                  <article><span className="chain-coin eth">Ξ</span><div><small>ETHEREUM · SEPOLIA</small><b>{balance.toFixed(4)} ETH</b><em>Native test token</em></div><a href={`https://sepolia.etherscan.io/address/${ethWalletAddress}`} target="_blank" rel="noreferrer">Explorer ↗</a></article>
+                  <article><span className="chain-coin sol">S</span><div><small>SOLANA · DEVNET</small><b>{solBalance.toFixed(3)} SOL</b><em>Native test token</em></div><a href={`https://explorer.solana.com/address/${solWalletAddress}?cluster=devnet`} target="_blank" rel="noreferrer">Explorer ↗</a></article>
+                </div>}
+                {(walletAssetView === "all" || walletAssetView === "nfts") && <div className="wallet-nft-area">
+                  <div className="wallet-nft-title"><b>NFTs in your Campus wallet</b><small>{walletNfts.length} launchpad item{walletNfts.length === 1 ? "" : "s"}</small></div>
+                  {walletAssetsLoading && walletNfts.length === 0 ? <div className="wallet-assets-empty">Reading your Campus launches…</div> : walletAssetsError ? <div className="wallet-assets-empty error">{walletAssetsError}</div> : walletNfts.length ? <div className="wallet-nft-grid">{walletNfts.map((asset) => <article key={asset.id} className="wallet-nft-card"><img src={asset.image} alt={asset.name} /><div><span><small>{asset.standard} · {asset.network === "sepolia" ? "SEPOLIA" : "SOLANA DEVNET"}</small><b>{asset.name}</b><em>{asset.quantity} owned · edition supply {asset.maxSupply}</em></span><div>{asset.contractAddress && <a href={`https://sepolia.etherscan.io/address/${asset.contractAddress}`} target="_blank" rel="noreferrer">Contract ↗</a>}{asset.mintTransactionHash && <a href={`https://sepolia.etherscan.io/tx/${asset.mintTransactionHash}`} target="_blank" rel="noreferrer">Mint receipt ↗</a>}<a href={asset.metadata} target="_blank" rel="noreferrer">Metadata ↗</a></div></div></article>)}</div> : <div className="wallet-assets-empty"><b>No launchpad NFTs yet.</b><span>Mint an NFT on testnet and it will appear here automatically.</span><button onClick={() => setActive("create")}>Launch your first NFT →</button></div>}
+                </div>}
+                <small className="wallet-assets-note">Incoming assets from outside Campus OS will be added when the full testnet indexer is connected.</small>
+              </section>
             </div>
           )}
 
@@ -1112,15 +1189,16 @@ export default function OnchainLab() {
             <div className="page-stack">
               <section className="build-hero"><div><span className="eyebrow">IDEA → DEMO → TESTNET PROJECT</span><h2>See what is possible.<br />Then deploy your version.</h2><p>Every demo explains the idea, shows how it works and opens a guided build for Ethereum or Solana.</p></div><div className="build-chain"><button className={activeChain === "ethereum" ? "active" : ""} onClick={() => setActiveChain("ethereum")}>Ξ Ethereum<br /><small>Sepolia</small></button><button className={activeChain === "solana" ? "active sol" : "sol"} onClick={() => setActiveChain("solana")}>S Solana<br /><small>Devnet</small></button></div></section>
               <div className="build-demo-grid">{buildDemos.map((demo) => <article className="build-demo card" key={demo.title}><span>{demo.icon}</span><div><small>{demo.level} · {demo.chain}</small><h3>{demo.title}</h3><p>{demo.copy}</p></div><button onClick={() => notify(`${demo.title} demo opened with Mask guidance`)}>View demo →</button></article>)}</div>
-              <section className="guided-builder"><div className="creator-copy"><span className="eyebrow">GUIDED BUILD · ORIGINAL ART</span><h2>Turn an idea into an onchain object.</h2><p>Create a testnet collection, mint original work and decide how many editions should exist.</p><div className="creator-note"><b>Sandbox rules</b><span>Only upload work you created.</span><span>Everything is marked testnet.</span><span>An educator reviews it before listing.</span></div></div>
+              <section className="guided-builder"><div className="creator-copy"><span className="eyebrow">GUIDED BUILD · ORIGINAL ART</span><h2>Turn an idea into an onchain object.</h2><p>Create a testnet collection, mint original work and decide how many editions should exist.</p><div className="creator-note"><b>Testnet freedom</b><span>Only upload work you created.</span><span>Testnet assets have no real value.</span><span>Launches need your wallet approval—not educator approval.</span></div></div>
               <form className="creator-form card" onSubmit={createCollection}>
-                <div className="form-head"><span><b>NEW COLLECTION</b><small>Step 1 of 3 · The idea</small></span><em>{activeChain === "ethereum" ? "SEPOLIA" : "SOLANA DEVNET"}</em></div>
-                <label>Collection name<input required placeholder="e.g. Campus Signals" /></label>
-                <label>Creator story<textarea required placeholder="What inspired the work? What should a collector understand?" /></label>
-                <div className="form-row"><label>Symbol<input required placeholder="SIGNAL" maxLength={8} /></label><label>Edition size<input required type="number" min="1" max="25" defaultValue="3" /></label></div>
+                <div className="form-head"><span><b>NEW TESTNET COLLECTION</b><small>Idea → wallet review → launch</small></span><em>{activeChain === "ethereum" ? "SEPOLIA" : "SOLANA DEVNET"}</em></div>
+                <label>Collection name<input name="collectionName" required placeholder="e.g. Campus Signals" /></label>
+                <label>Creator story<textarea name="creatorStory" required placeholder="What inspired the work? What should a collector understand?" /></label>
+                <div className="form-row"><label>Symbol<input name="symbol" required placeholder="SIGNAL" maxLength={8} /></label><label>Edition size<input name="editionSize" required type="number" min="1" max="1000" defaultValue="3" /></label></div>
                 <label className="upload-box"><input type="file" accept="image/*" onChange={handleArt} /><span>{artPreview ? <img src={artPreview} alt="Artwork preview" /> : <><b>＋</b><strong>Upload first artwork</strong><small>PNG, JPG or WebP · original work only</small></>}</span></label>
-                <button className="primary full" type="submit">Create draft collection →</button>
-                {created && <div className="success-box"><b>Draft ready</b><span>Your collection is waiting for educator review.</span></div>}
+                <label className="creator-rights"><input type="checkbox" required /> I created this artwork or have permission to use it.</label>
+                <button className="primary full" type="submit">Review & launch on testnet →</button>
+                <div className="testnet-open-note"><b>No educator gate on testnet.</b><span>Your wallet still shows every transaction before it is sent.</span></div>
               </form>
               </section>
             </div>

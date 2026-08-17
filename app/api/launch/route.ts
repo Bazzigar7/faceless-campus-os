@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { encodeDeployData, isAddress, parseEther, type Hex } from "viem";
 import artifact from "../../../contracts/artifacts/CampusEdition.json";
 import { testnetLaunches, wallets } from "../../../db/schema";
@@ -17,6 +17,37 @@ function decodeArtwork(dataUrl: string) {
 
 function textValue(value: unknown, max: number) {
   return String(value || "").trim().slice(0, max);
+}
+
+export async function GET(request: Request) {
+  try {
+    const { db, student } = await requireCampusUser(request);
+    const launches = await db.select().from(testnetLaunches).where(and(
+      eq(testnetLaunches.userId, student.id),
+      eq(testnetLaunches.status, "minted"),
+    )).orderBy(desc(testnetLaunches.updatedAt));
+    const origin = new URL(request.url).origin;
+    return Response.json({
+      nfts: launches.map((launch) => ({
+        id: launch.id,
+        chain: launch.chain,
+        network: launch.network,
+        standard: launch.standard.toUpperCase(),
+        name: launch.name,
+        symbol: launch.symbol,
+        description: launch.description,
+        quantity: 1,
+        maxSupply: launch.maxSupply,
+        contractAddress: launch.contractAddress,
+        mintTransactionHash: launch.mintTxHash,
+        image: `${origin}/api/launch/artwork/${launch.id}`,
+        metadata: `${origin}/api/launch/metadata/${launch.id}`,
+        updatedAt: launch.updatedAt,
+      })),
+    });
+  } catch (error) {
+    return faucetError(error);
+  }
 }
 
 export async function POST(request: Request) {

@@ -29,9 +29,30 @@ type LaunchProgress = {
   decimals: number | null;
   purpose: string | null;
   artworkReady: boolean | null;
+  artworkUploaded: boolean;
   authorityMode: "keep" | "revoke" | null;
   ready: boolean;
 };
+
+function launchDraftFromProgress(progress: LaunchProgress): LaunchDraft | null {
+  const nftComplete = progress.assetType === "nft_collection" && progress.artworkReady === true && progress.artworkUploaded && progress.mintPrice !== null && progress.royaltyPercent !== null;
+  const tokenComplete = progress.assetType === "token" && progress.decimals !== null && progress.authorityMode !== null;
+  if (!progress.chain || !progress.name || !progress.symbol || !progress.description || !progress.supply || !progress.purpose || (!nftComplete && !tokenComplete)) return null;
+  return {
+    assetType: progress.assetType,
+    chain: progress.chain,
+    name: progress.name,
+    symbol: progress.symbol,
+    description: progress.description,
+    supply: progress.supply,
+    mintPrice: progress.assetType === "nft_collection" && /^(?:free|0(?:\.0+)?)$/i.test(progress.mintPrice || "") ? "0" : progress.mintPrice,
+    royaltyPercent: progress.royaltyPercent,
+    decimals: progress.decimals,
+    purpose: progress.purpose,
+    artworkReady: progress.artworkReady,
+    authorityMode: progress.authorityMode,
+  };
+}
 
 const curriculum = `
 Faceless Campus OS teaches 25 approved lessons across three courses.
@@ -127,6 +148,11 @@ export async function POST(request: Request) {
     if (hasArtwork && !body.artwork?.rightsConfirmed) return Response.json({ error: "Confirm that you created the artwork or have permission to use it" }, { status: 400 });
     const launchStart = /(?:\b(?:nft|eft)\b.*collection|launch.*(?:nft|collection|token)|create.*(?:nft|collection|token))/i.test(question);
     const launchActive = Boolean(suppliedProgress || launchStart);
+    const approvalIntent = /^(?:y+e*s+|eys|yes[,! ]*(?:go ahead|proceed)?|go ahead|proceed|launch it|do it)$/i.test(question.trim());
+    if (suppliedProgress?.ready && approvalIntent) {
+      const approvedDraft = launchDraftFromProgress(suppliedProgress);
+      if (approvedDraft) return Response.json({ answer: "Your testnet draft is ready. Opening the Launchpad review now—nothing will be signed until you approve it in your wallet.", citations: [], launchDraft: approvedDraft, launchProgress: suppliedProgress, openLaunchpad: true });
+    }
     const lessonTitle = String(body.lesson?.title || "").slice(0, 120);
     const lessonSummary = String(body.lesson?.summary || "").slice(0, 500);
     const course = String(body.lesson?.course || "").slice(0, 40);
@@ -149,7 +175,7 @@ export async function POST(request: Request) {
               type: "object",
               additionalProperties: false,
               properties: {
-                message: { type: "string", description: "A concise natural reply. Answer any side question first, then ask exactly one genuinely missing launch question unless ready." },
+                message: { type: "string", description: "A concise natural reply. Answer any side question first, then ask exactly one genuinely missing launch question. When ready, do not ask for another confirmation; say the draft is ready and tell the student to open it in Launchpad." },
                 progress: {
                   type: "object",
                   additionalProperties: false,
@@ -165,10 +191,11 @@ export async function POST(request: Request) {
                     decimals: { type: ["integer", "null"], minimum: 0, maximum: 18 },
                     purpose: { type: ["string", "null"] },
                     artworkReady: { type: ["boolean", "null"] },
+                    artworkUploaded: { type: "boolean" },
                     authorityMode: { type: ["string", "null"], enum: ["keep", "revoke", null] },
                     ready: { type: "boolean" },
                   },
-                  required: ["assetType", "chain", "name", "symbol", "description", "supply", "mintPrice", "royaltyPercent", "decimals", "purpose", "artworkReady", "authorityMode", "ready"],
+                  required: ["assetType", "chain", "name", "symbol", "description", "supply", "mintPrice", "royaltyPercent", "decimals", "purpose", "artworkReady", "artworkUploaded", "authorityMode", "ready"],
                 },
               },
               required: ["message", "progress"],
@@ -190,7 +217,7 @@ For a launch request, explain that Campus OS can prepare it on Sepolia or Solana
 For an NFT collection collect: chain, artwork readiness, name, description, supply, free-or-paid mint price, royalty percentage, and purpose. A symbol is technical metadata here, not a marketplace requirement: never make the student stop to choose one. If absent, automatically derive a sensible 3–5 character uppercase symbol from the collection name.
 For a token collect: chain, name, symbol, description and purpose, supply, decimals, and whether mint and freeze authority should be kept for learning or revoked for fixed supply. Explain authority tradeoffs plainly.
 Before asking anything, audit the persistent progress and the full conversation. Never ask again for a non-null value unless the student explicitly corrects it. If the student asks a side question, answer it and then continue with the next missing requirement. When the student says “make your own”, “you decide” or similar, choose a sensible learning-focused value and save it rather than asking again.
-When artwork is attached, inspect it briefly, acknowledge what is visibly present without inventing identity or ownership, set artworkReady to true, and suggest metadata only when useful. The student has confirmed they created it or have permission to use it; do not claim that this confirmation independently proves copyright.
+Treat “ready to upload” as artworkReady=true but artworkUploaded=false. A launch is not ready and no Launchpad draft should appear until the actual file is attached. When artwork is attached, inspect it briefly, acknowledge what is visibly present without inventing text or identity, set artworkReady=true and artworkUploaded=true, and suggest metadata only when useful. The student has confirmed they created it or have permission to use it; do not claim that this confirmation independently proves copyright.
 On every active launch turn, call update_launch_progress. Merge the newest answer into the supplied progress; never erase an existing value without an explicit correction. Mark ready only when all relevant values are present. Use null for fields that do not apply. The student's connected Campus wallet is the default creator and proceeds wallet. All launches in this first workflow are testnet.
 Persistent launch progress supplied by Campus OS: ${JSON.stringify(suppliedProgress)}
 Attached artwork: ${hasArtwork ? `${String(body.artwork?.name || "artwork").slice(0, 120)} (student rights confirmation received)` : "none on this turn"}.
@@ -206,9 +233,12 @@ Current optional lesson context: ${course || "none"} — ${lessonTitle || "none"
     const data = await upstream.json() as Record<string, unknown> & { error?: { message?: string } };
     if (!upstream.ok) throw new Error(data.error?.message || "Mask could not answer right now");
     const progressResult = responseLaunchProgress(data);
-    const progress = progressResult?.progress ?? null;
-    const launchDraft = progress?.ready && progress.assetType && progress.chain && progress.name && progress.symbol && progress.description && progress.supply && progress.purpose ? progress as LaunchDraft : responseLaunchDraft(data);
-    const answer = progressResult?.message || responseText(data) || (launchDraft ? `Your ${launchDraft.assetType === "nft_collection" ? "NFT collection" : "token"} draft is ready. Review every detail in the Campus Launchpad, then approve the testnet deployment with your own wallet.` : "");
+    const rawProgress = progressResult?.progress ?? null;
+    const progress = rawProgress ? { ...rawProgress, artworkReady: hasArtwork ? true : rawProgress.artworkReady, artworkUploaded: hasArtwork || rawProgress.artworkUploaded } : null;
+    const launchDraft = progress ? launchDraftFromProgress(progress) : responseLaunchDraft(data);
+    if (progress) progress.ready = Boolean(launchDraft);
+    const waitingForUpload = progress?.assetType === "nft_collection" && progress.artworkReady === true && !progress.artworkUploaded;
+    const answer = waitingForUpload ? "Everything else is saved. Attach the actual artwork file using the Art button, and I’ll inspect it before creating the Launchpad draft." : progressResult?.message || responseText(data) || (launchDraft ? `Your ${launchDraft.assetType === "nft_collection" ? "NFT collection" : "token"} draft is ready. Open it in the Campus Launchpad to review every detail before wallet approval.` : "");
     if (!answer) throw new Error("Mask could not answer right now");
     return Response.json({ answer, citations: responseCitations(data), launchDraft, launchProgress: progress });
   } catch (error) {

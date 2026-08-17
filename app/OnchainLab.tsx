@@ -69,6 +69,7 @@ type LaunchProgress = {
   decimals: number | null;
   purpose: string | null;
   artworkReady: boolean | null;
+  artworkUploaded: boolean;
   authorityMode: LaunchDraft["authorityMode"];
   ready: boolean;
 };
@@ -713,7 +714,7 @@ export default function OnchainLab() {
           lesson: { course: selectedLesson.course, title: selectedLesson.title, summary: selectedLesson.copy },
         }),
       });
-      const result = await response.json() as { answer?: string; citations?: MaskCitation[]; launchDraft?: LaunchDraft | null; launchProgress?: LaunchProgress | null; error?: string };
+      const result = await response.json() as { answer?: string; citations?: MaskCitation[]; launchDraft?: LaunchDraft | null; launchProgress?: LaunchProgress | null; openLaunchpad?: boolean; error?: string };
       if (!response.ok || !result.answer) throw new Error(result.error || "Mask could not answer right now");
       if (result.launchProgress) setMaskLaunchProgress(result.launchProgress);
       if (submittedArtwork) {
@@ -723,6 +724,7 @@ export default function OnchainLab() {
         setMaskArtworkRights(false);
       }
       setMaskMessages((current) => [...current, { role: "assistant", text: result.answer!, citations: result.citations, launchDraft: result.launchDraft }]);
+      if (result.openLaunchpad && result.launchDraft) openLaunchDraft(result.launchDraft);
     } catch (error) {
       setMaskMessages((current) => [...current, { role: "assistant", text: error instanceof Error ? error.message : "I couldn’t answer that right now. Please try again." }]);
     } finally {

@@ -86,6 +86,7 @@ type LaunchDeployment = {
   mintHash?: Hex;
 };
 type WalletAssetView = "all" | "tokens" | "nfts";
+type UsdPrices = { ethereum: number; solana: number; updatedAt: number };
 type WalletNft = {
   id: string;
   chain: Chain;
@@ -225,6 +226,10 @@ function decimalToUnits(value: string, decimals: number): bigint {
   return BigInt(whole) * (10n ** BigInt(decimals)) + BigInt((fraction + "0".repeat(decimals)).slice(0, decimals));
 }
 
+function formatUsd(value: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value);
+}
+
 const solanaDevnetRpc = createSolanaRpc("https://api.devnet.solana.com");
 const sepoliaPublicClient = createPublicClient({ chain: sepolia, transport: http() });
 const campusEditionMintAbi = [{
@@ -272,6 +277,7 @@ export default function OnchainLab() {
   const [walletNfts, setWalletNfts] = useState<WalletNft[]>([]);
   const [walletAssetsLoading, setWalletAssetsLoading] = useState(false);
   const [walletAssetsError, setWalletAssetsError] = useState("");
+  const [usdPrices, setUsdPrices] = useState<UsdPrices | null>(null);
   const [claimedCampaigns, setClaimedCampaigns] = useState<number[]>([]);
   const [username, setUsername] = useState("aanya");
   const [campusUsername, setCampusUsername] = useState("");
@@ -340,6 +346,7 @@ export default function OnchainLab() {
   useEffect(() => {
     if (!authenticated || !ethereumWallet || !solanaWallet) return;
     void refreshBalances();
+    void loadReferencePrices();
   }, [authenticated, ethereumWallet?.address, solanaWallet?.address]);
 
   useEffect(() => {
@@ -425,6 +432,16 @@ export default function OnchainLab() {
       setWalletAssetsError(error instanceof Error ? error.message : "Wallet assets are unavailable");
     } finally {
       setWalletAssetsLoading(false);
+    }
+  }
+
+  async function loadReferencePrices() {
+    try {
+      const response = await fetch("/api/prices");
+      const result = await response.json() as { usd?: UsdPrices };
+      if (response.ok && result.usd) setUsdPrices(result.usd);
+    } catch {
+      // Balances remain usable when the optional market reference is unavailable.
     }
   }
 
@@ -1032,7 +1049,7 @@ export default function OnchainLab() {
 
               <section className="wallet-card card">
                 <div className="section-head"><span><b>CLASSROOM WALLET</b><small>{wallet}</small></span><button onClick={() => copyWalletAddress(activeChain)}>Copy</button></div>
-                <div className="balance"><small>{activeChain === "ethereum" ? "SEPOLIA BALANCE" : "SOLANA DEVNET BALANCE"}</small><strong>{activeChain === "ethereum" ? balance.toFixed(3) : solBalance.toFixed(2)} <span>{activeChain === "ethereum" ? "ETH" : "SOL"}</span></strong><em>Testnet only · no real value</em></div>
+                <div className="balance"><small>{activeChain === "ethereum" ? "SEPOLIA BALANCE" : "SOLANA DEVNET BALANCE"}</small><strong>{activeChain === "ethereum" ? balance.toFixed(3) : solBalance.toFixed(2)} <span>{activeChain === "ethereum" ? "ETH" : "SOL"}</span></strong><em>{usdPrices ? `≈ ${formatUsd((activeChain === "ethereum" ? balance * usdPrices.ethereum : solBalance * usdPrices.solana))} USD reference` : "Loading USD reference…"}</em><em>Testnet only · not redeemable for USD</em></div>
                 <button className={(activeChain === "ethereum" ? balance : solBalance) ? "secondary claimed" : "secondary"} onClick={() => claimCampusFaucet(activeChain)} disabled={Boolean(faucetBusy)}>{faucetBusy === activeChain ? "Sending test funds…" : `Claim test ${activeChain === "ethereum" ? "ETH" : "SOL"}`}</button>
               </section>
 
@@ -1120,7 +1137,7 @@ export default function OnchainLab() {
             <div className="page-stack">
               <section className="wallet-hero">
                 <div><span className="eyebrow">YOUR MULTICHAIN CLASSROOM IDENTITY</span><h2>{wallet}</h2><p>{authenticated ? "Your Privy wallets are ready for supervised Ethereum and Solana practice." : "Demo identity · sign in with Google to create your real classroom wallets."}</p></div>
-                <div className="wallet-balance"><small>{activeChain === "ethereum" ? "SEPOLIA BALANCE" : "SOLANA DEVNET BALANCE"}</small><strong>{activeChain === "ethereum" ? `${balance.toFixed(4)} ETH` : `${solBalance.toFixed(3)} SOL`}</strong><button onClick={() => claimCampusFaucet(activeChain)}>Claim from Campus Faucet ↓</button></div>
+                <div className="wallet-balance"><small>{activeChain === "ethereum" ? "SEPOLIA BALANCE" : "SOLANA DEVNET BALANCE"}</small><strong>{activeChain === "ethereum" ? `${balance.toFixed(4)} ETH` : `${solBalance.toFixed(3)} SOL`}</strong><em>{usdPrices ? `≈ ${formatUsd(activeChain === "ethereum" ? balance * usdPrices.ethereum : solBalance * usdPrices.solana)} USD reference` : "Loading USD reference…"}</em><button onClick={() => claimCampusFaucet(activeChain)}>Claim from Campus Faucet ↓</button></div>
               </section>
               <div className="dual-wallets"><button className={activeChain === "ethereum" ? "active" : ""} onClick={() => resetTransferForChain("ethereum")}><span className="chain-coin eth">Ξ</span><span><small>ETHEREUM CLASSROOM WALLET</small><b>{ethWallet}</b><em>{balance.toFixed(4)} test ETH · Sepolia</em></span><strong>Open →</strong></button><button className={activeChain === "solana" ? "active" : ""} onClick={() => resetTransferForChain("solana")}><span className="chain-coin sol">S</span><span><small>SOLANA CLASSROOM WALLET</small><b>{solWallet}</b><em>{solBalance.toFixed(3)} test SOL · Devnet</em></span><strong>Open →</strong></button></div>
               <section className="wallet-addresses card" aria-label="Full classroom wallet addresses">
@@ -1173,8 +1190,8 @@ export default function OnchainLab() {
                 <div className="wallet-assets-head"><div><span className="eyebrow">YOUR ONCHAIN ITEMS</span><h3>Tokens, NFTs and everything you launch.</h3><p>Campus OS shows test funds and assets created through the launchpad in one place.</p></div><button disabled={walletAssetsLoading} onClick={() => void loadWalletAssets()}>{walletAssetsLoading ? "Refreshing…" : "Refresh assets ↻"}</button></div>
                 <div className="wallet-asset-tabs" role="tablist" aria-label="Wallet asset type">{(["all", "tokens", "nfts"] as WalletAssetView[]).map((view) => <button role="tab" aria-selected={walletAssetView === view} className={walletAssetView === view ? "active" : ""} key={view} onClick={() => setWalletAssetView(view)}>{view === "all" ? "All assets" : view === "tokens" ? "Tokens" : "NFTs"}</button>)}</div>
                 {(walletAssetView === "all" || walletAssetView === "tokens") && <div className="wallet-token-grid">
-                  <article><span className="chain-coin eth">Ξ</span><div><small>ETHEREUM · SEPOLIA</small><b>{balance.toFixed(4)} ETH</b><em>Native test token</em></div><a href={`https://sepolia.etherscan.io/address/${ethWalletAddress}`} target="_blank" rel="noreferrer">Explorer ↗</a></article>
-                  <article><span className="chain-coin sol">S</span><div><small>SOLANA · DEVNET</small><b>{solBalance.toFixed(3)} SOL</b><em>Native test token</em></div><a href={`https://explorer.solana.com/address/${solWalletAddress}?cluster=devnet`} target="_blank" rel="noreferrer">Explorer ↗</a></article>
+                  <article><span className="chain-coin eth">Ξ</span><div><small>ETHEREUM · SEPOLIA</small><b>{balance.toFixed(4)} ETH</b><strong>{usdPrices ? `≈ ${formatUsd(balance * usdPrices.ethereum)}` : "USD reference unavailable"}</strong><em>Reference only · test token</em></div><a href={`https://sepolia.etherscan.io/address/${ethWalletAddress}`} target="_blank" rel="noreferrer">Explorer ↗</a></article>
+                  <article><span className="chain-coin sol">S</span><div><small>SOLANA · DEVNET</small><b>{solBalance.toFixed(3)} SOL</b><strong>{usdPrices ? `≈ ${formatUsd(solBalance * usdPrices.solana)}` : "USD reference unavailable"}</strong><em>Reference only · test token</em></div><a href={`https://explorer.solana.com/address/${solWalletAddress}?cluster=devnet`} target="_blank" rel="noreferrer">Explorer ↗</a></article>
                 </div>}
                 {(walletAssetView === "all" || walletAssetView === "nfts") && <div className="wallet-nft-area">
                   <div className="wallet-nft-title"><b>NFTs in your Campus wallet</b><small>{walletNfts.length} launchpad item{walletNfts.length === 1 ? "" : "s"}</small></div>

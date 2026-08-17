@@ -3,7 +3,11 @@
 import { PrivyProvider } from "@privy-io/react-auth";
 import { toSolanaWalletConnectors } from "@privy-io/react-auth/solana";
 import { createSolanaRpc, createSolanaRpcSubscriptions } from "@solana/kit";
+import { Buffer } from "buffer";
 import { sepolia } from "viem/chains";
+
+const browserGlobals = globalThis as typeof globalThis & { Buffer?: typeof Buffer };
+browserGlobals.Buffer ??= Buffer;
 
 const solanaConnectors = toSolanaWalletConnectors({ shouldAutoConnect: true });
 const solanaDevnetRpc = createSolanaRpc("https://api.devnet.solana.com");

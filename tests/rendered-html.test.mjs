@@ -50,3 +50,9 @@ test("profile registration verifies signed Privy identity data", async () => {
   assert.match(client, /chainId:\s*11155111/);
   assert.doesNotMatch(environment, /PRIVY_APP_SECRET/);
 });
+
+test("Privy transaction approvals have the browser Buffer compatibility layer", async () => {
+  const provider = await readFile(new URL("../app/PrivyClientProvider.tsx", import.meta.url), "utf8");
+  assert.match(provider, /import \{ Buffer \} from "buffer"/);
+  assert.match(provider, /browserGlobals\.Buffer \?\?= Buffer/);
+});

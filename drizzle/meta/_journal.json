@@ -22,6 +22,13 @@
       "when": 1786921996042,
       "tag": "0002_parched_sinister_six",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1786991747187,
+      "tag": "0003_true_silver_sable",
+      "breakpoints": true
     }
   ]
 }

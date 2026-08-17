@@ -124,6 +124,35 @@ export const mainnetLaunchRequests = sqliteTable("mainnet_launch_requests", {
   index("idx_mainnet_requests_user").on(table.userId),
 ]);
 
+export const testnetLaunches = sqliteTable("testnet_launches", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  chain: text("chain", { enum: ["ethereum", "solana"] }).notNull(),
+  network: text("network", { enum: ["sepolia", "solana_devnet"] }).notNull(),
+  standard: text("standard", { enum: ["erc1155", "erc721", "metaplex_core"] }).notNull(),
+  name: text("name").notNull(),
+  symbol: text("symbol").notNull(),
+  description: text("description").notNull(),
+  purpose: text("purpose").notNull(),
+  maxSupply: integer("max_supply").notNull(),
+  mintPrice: text("mint_price").notNull().default("0"),
+  royaltyBps: integer("royalty_bps").notNull().default(0),
+  creatorAddress: text("creator_address").notNull(),
+  artworkKey: text("artwork_key").notNull(),
+  artworkContentType: text("artwork_content_type").notNull(),
+  status: text("status", { enum: ["prepared", "deploying", "deployed", "minted", "failed"] }).notNull().default("prepared"),
+  deployTxHash: text("deploy_tx_hash"),
+  contractAddress: text("contract_address"),
+  mintTxHash: text("mint_tx_hash"),
+  errorMessage: text("error_message"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_testnet_launches_user_time").on(table.userId, table.createdAt),
+  index("idx_testnet_launches_status").on(table.status),
+  uniqueIndex("idx_testnet_launches_deploy_tx").on(table.deployTxHash),
+]);
+
 export const campaigns = sqliteTable("campaigns", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),

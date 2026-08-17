@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
-import { useIdentityToken, usePrivy, useSendTransaction as useSendEthereumTransaction, useWallets as useEthereumWallets } from "@privy-io/react-auth";
+import { useIdentityToken, usePrivy, useSendTransaction as useSendEthereumTransaction, useUser, useWallets as useEthereumWallets } from "@privy-io/react-auth";
 import { useExportWallet as useExportSolanaWallet, useSignAndSendTransaction, useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
 import {
   address,
@@ -236,6 +236,15 @@ function formatUsd(value: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value);
 }
 
+function identityTokenExpiresSoon(token: string, leewaySeconds = 30) {
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))) as { exp?: number };
+    return typeof payload.exp !== "number" || payload.exp * 1_000 <= Date.now() + leewaySeconds * 1_000;
+  } catch {
+    return true;
+  }
+}
+
 const solanaDevnetRpc = createSolanaRpc("https://api.devnet.solana.com");
 const sepoliaPublicClient = createPublicClient({ chain: sepolia, transport: http() });
 const campusEditionMintAbi = [{
@@ -249,6 +258,7 @@ const campusEditionMintAbi = [{
 export default function OnchainLab() {
   const { ready: privyReady, authenticated, user, login, logout, linkWallet, exportWallet: exportEthereumWallet } = usePrivy();
   const { identityToken } = useIdentityToken();
+  const { refreshUser } = useUser();
   const { wallets: ethereumWallets } = useEthereumWallets();
   const { wallets: solanaWallets } = useSolanaWallets();
   const { sendTransaction: sendEthereumTransaction } = useSendEthereumTransaction();
@@ -273,6 +283,7 @@ export default function OnchainLab() {
   const [maskArtworkRights, setMaskArtworkRights] = useState(false);
   const [maskMessages, setMaskMessages] = useState<MaskMessage[]>([{ role: "assistant", text: "Ask me anything. If it connects to a Faceless lesson, I’ll use the approved material. If it doesn’t, I’ll answer it normally." }]);
   const [maskBusy, setMaskBusy] = useState(false);
+  const identityTokenRef = useRef<string | null>(identityToken);
   const [maskLaunchProgress, setMaskLaunchProgress] = useState<LaunchProgress | null>(null);
   const [launchDraft, setLaunchDraft] = useState<LaunchDraft | null>(null);
   const [launchReviewReady, setLaunchReviewReady] = useState(false);
@@ -325,6 +336,10 @@ export default function OnchainLab() {
   const selectedComplete = selectedProgress?.status === "completed";
 
   const title = useMemo(() => navItems.find((item) => item.id === active)?.label ?? "Home", [active]);
+
+  useEffect(() => {
+    identityTokenRef.current = identityToken;
+  }, [identityToken]);
 
   useEffect(() => {
     if (authenticated) setLoading(false);
@@ -799,6 +814,20 @@ export default function OnchainLab() {
     setSelectedLesson(firstIncomplete ?? lessonTracks[course][0]);
   }
 
+  async function campusIdentityToken(forceRefresh = false) {
+    const current = identityTokenRef.current;
+    if (!current) return null;
+    if (!forceRefresh && !identityTokenExpiresSoon(current)) return current;
+
+    await refreshUser();
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const refreshed = identityTokenRef.current;
+      if (refreshed && refreshed !== current && !identityTokenExpiresSoon(refreshed, 0)) return refreshed;
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    }
+    return identityTokenRef.current && !identityTokenExpiresSoon(identityTokenRef.current, 0) ? identityTokenRef.current : null;
+  }
+
   async function askMask(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const question = maskQuestion.trim() || (maskArtwork ? "I’ve attached my artwork for the NFT collection. Inspect it and continue the launch setup." : "");
@@ -814,17 +843,26 @@ export default function OnchainLab() {
     setMaskQuestion("");
     setMaskBusy(true);
     try {
-      const response = await fetch("/api/mask", {
-        method: "POST",
-        headers: { "content-type": "application/json", "privy-id-token": identityToken },
-        body: JSON.stringify({
+      const requestBody = JSON.stringify({
           question,
           history: previous,
           launchProgress: activeLaunchProgress,
           artwork: submittedArtwork ? { ...submittedArtwork, rightsConfirmed: true } : null,
           lesson: { course: selectedLesson.course, title: selectedLesson.title, summary: selectedLesson.copy },
-        }),
       });
+      let requestToken = await campusIdentityToken();
+      if (!requestToken) throw new Error("Your Campus session expired. Refresh the page or sign in again—your wallets and work are safe.");
+      const sendQuestion = (token: string) => fetch("/api/mask", {
+        method: "POST",
+        headers: { "content-type": "application/json", "privy-id-token": token },
+        body: requestBody,
+      });
+      let response = await sendQuestion(requestToken);
+      if (response.status === 401) {
+        requestToken = await campusIdentityToken(true);
+        if (!requestToken) throw new Error("Your Campus session expired. Refresh the page or sign in again—your wallets and work are safe.");
+        response = await sendQuestion(requestToken);
+      }
       const result = await response.json() as { answer?: string; citations?: MaskCitation[]; launchDraft?: LaunchDraft | null; launchProgress?: LaunchProgress | null; openLaunchpad?: boolean; error?: string };
       if (!response.ok || !result.answer) throw new Error(result.error || "Mask could not answer right now");
       if (result.launchProgress) setMaskLaunchProgress(result.launchProgress);

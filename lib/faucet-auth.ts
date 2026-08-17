@@ -39,6 +39,11 @@ export async function requireOwner(request: Request) {
 
 export function faucetError(error: unknown) {
   if (error instanceof Response) return error;
+  const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code || "") : "";
+  const rawMessage = error instanceof Error ? error.message : "";
+  if (code === "ERR_JWT_EXPIRED" || rawMessage.includes('"exp" claim timestamp check failed')) {
+    return Response.json({ error: "Your Campus session expired. Please try again while we refresh it." }, { status: 401 });
+  }
   const message = error instanceof Error ? error.message : "Campus Faucet request failed";
   return Response.json({ error: message }, { status: 500 });
 }

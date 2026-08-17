@@ -57,6 +57,21 @@ type LaunchDraft = {
   artworkReady: boolean | null;
   authorityMode: "keep" | "revoke" | null;
 };
+type LaunchProgress = {
+  assetType: LaunchDraft["assetType"] | null;
+  chain: Chain | null;
+  name: string | null;
+  symbol: string | null;
+  description: string | null;
+  supply: number | null;
+  mintPrice: string | null;
+  royaltyPercent: number | null;
+  decimals: number | null;
+  purpose: string | null;
+  artworkReady: boolean | null;
+  authorityMode: LaunchDraft["authorityMode"];
+  ready: boolean;
+};
 type MaskMessage = { role: "user" | "assistant"; text: string; citations?: MaskCitation[]; launchDraft?: LaunchDraft | null };
 
 type Drop = {
@@ -208,6 +223,7 @@ export default function OnchainLab() {
   const [maskQuestion, setMaskQuestion] = useState("");
   const [maskMessages, setMaskMessages] = useState<MaskMessage[]>([{ role: "assistant", text: "Ask me anything. If it connects to a Faceless lesson, I’ll use the approved material. If it doesn’t, I’ll answer it normally." }]);
   const [maskBusy, setMaskBusy] = useState(false);
+  const [maskLaunchProgress, setMaskLaunchProgress] = useState<LaunchProgress | null>(null);
   const [launchDraft, setLaunchDraft] = useState<LaunchDraft | null>(null);
   const [launchReviewReady, setLaunchReviewReady] = useState(false);
   const [claimedCampaigns, setClaimedCampaigns] = useState<number[]>([]);
@@ -672,7 +688,10 @@ export default function OnchainLab() {
     const question = maskQuestion.trim();
     if (!question || maskBusy) return;
     if (!identityToken) return notify("Sign in to ask the live Mask");
-    const previous = maskMessages.slice(-8);
+    const startingNewLaunch = /(?:help me launch|i want to launch|start.*launch)/i.test(question) && maskLaunchProgress?.ready;
+    const activeLaunchProgress = startingNewLaunch ? null : maskLaunchProgress;
+    if (startingNewLaunch) setMaskLaunchProgress(null);
+    const previous = maskMessages.slice(-30);
     setMaskMessages((current) => [...current, { role: "user", text: question }]);
     setMaskQuestion("");
     setMaskBusy(true);
@@ -683,11 +702,13 @@ export default function OnchainLab() {
         body: JSON.stringify({
           question,
           history: previous,
+          launchProgress: activeLaunchProgress,
           lesson: { course: selectedLesson.course, title: selectedLesson.title, summary: selectedLesson.copy },
         }),
       });
-      const result = await response.json() as { answer?: string; citations?: MaskCitation[]; launchDraft?: LaunchDraft | null; error?: string };
+      const result = await response.json() as { answer?: string; citations?: MaskCitation[]; launchDraft?: LaunchDraft | null; launchProgress?: LaunchProgress | null; error?: string };
       if (!response.ok || !result.answer) throw new Error(result.error || "Mask could not answer right now");
+      if (result.launchProgress) setMaskLaunchProgress(result.launchProgress);
       setMaskMessages((current) => [...current, { role: "assistant", text: result.answer!, citations: result.citations, launchDraft: result.launchDraft }]);
     } catch (error) {
       setMaskMessages((current) => [...current, { role: "assistant", text: error instanceof Error ? error.message : "I couldn’t answer that right now. Please try again." }]);

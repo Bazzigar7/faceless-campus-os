@@ -17,6 +17,22 @@ type LaunchDraft = {
   authorityMode: "keep" | "revoke" | null;
 };
 
+type LaunchProgress = {
+  assetType: "nft_collection" | "token" | null;
+  chain: "ethereum" | "solana" | null;
+  name: string | null;
+  symbol: string | null;
+  description: string | null;
+  supply: number | null;
+  mintPrice: string | null;
+  royaltyPercent: number | null;
+  decimals: number | null;
+  purpose: string | null;
+  artworkReady: boolean | null;
+  authorityMode: "keep" | "revoke" | null;
+  ready: boolean;
+};
+
 const curriculum = `
 Faceless Campus OS teaches 25 approved lessons across three courses.
 Blockchain basics: USDT, peer-to-peer exchange and escrow, and blockchain as a shared public record.
@@ -68,6 +84,21 @@ function responseLaunchDraft(data: Record<string, unknown>): LaunchDraft | null 
   return null;
 }
 
+function responseLaunchProgress(data: Record<string, unknown>) {
+  const output = Array.isArray(data.output) ? data.output : [];
+  for (const item of output) {
+    if (!item || typeof item !== "object") continue;
+    const call = item as { type?: string; name?: string; arguments?: string };
+    if (call.type !== "function_call" || call.name !== "update_launch_progress" || !call.arguments) continue;
+    try {
+      return JSON.parse(call.arguments) as { message: string; progress: LaunchProgress };
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 export async function POST(request: Request) {
   try {
     const { student } = await requireCampusUser(request);
@@ -77,15 +108,19 @@ export async function POST(request: Request) {
     const body = await request.json() as {
       question?: string;
       history?: ChatMessage[];
+      launchProgress?: LaunchProgress | null;
       lesson?: { course?: string; title?: string; summary?: string };
     };
     const question = String(body.question || "").trim().slice(0, 1_500);
     if (!question) return Response.json({ error: "Ask Mask a question" }, { status: 400 });
-    const history = (Array.isArray(body.history) ? body.history : []).slice(-8).flatMap((message) => {
+    const history = (Array.isArray(body.history) ? body.history : []).slice(-30).flatMap((message) => {
       if (message?.role !== "user" && message?.role !== "assistant") return [];
-      const text = String(message.text || "").trim().slice(0, 1_500);
+      const text = String(message.text || "").trim().slice(0, 1_200);
       return text ? [{ role: message.role, content: text }] : [];
     });
+    const suppliedProgress = body.launchProgress && typeof body.launchProgress === "object" ? body.launchProgress : null;
+    const launchStart = /(?:\b(?:nft|eft)\b.*collection|launch.*(?:nft|collection|token)|create.*(?:nft|collection|token))/i.test(question);
+    const launchActive = Boolean(suppliedProgress || launchStart);
     const lessonTitle = String(body.lesson?.title || "").slice(0, 120);
     const lessonSummary = String(body.lesson?.summary || "").slice(0, 500);
     const course = String(body.lesson?.course || "").slice(0, 40);
@@ -97,36 +132,46 @@ export async function POST(request: Request) {
         model: "gpt-5.6-luna",
         reasoning: { effort: "low" },
         text: { verbosity: "low" },
-        max_output_tokens: 700,
-        tools: [
-          { type: "web_search", search_context_size: "low" },
+        max_output_tokens: launchActive ? 900 : 700,
+        tools: launchActive ? [
           {
             type: "function",
-            name: "prepare_launch",
-            description: "Create a structured Campus Launchpad draft only after every required launch detail has been collected. Do not call this while information is missing.",
+            name: "update_launch_progress",
+            description: "Merge the student's newest answer into the persistent Campus Launchpad progress and return the next conversational reply.",
             strict: true,
             parameters: {
               type: "object",
               additionalProperties: false,
               properties: {
-                assetType: { type: "string", enum: ["nft_collection", "token"] },
-                chain: { type: "string", enum: ["ethereum", "solana"] },
-                name: { type: "string" },
-                symbol: { type: "string" },
-                description: { type: "string" },
-                supply: { type: "integer", minimum: 1 },
-                mintPrice: { type: ["string", "null"], description: "NFT mint price in the chain's native asset, or null for a token or free mint." },
-                royaltyPercent: { type: ["number", "null"], minimum: 0, maximum: 10 },
-                decimals: { type: ["integer", "null"], minimum: 0, maximum: 18 },
-                purpose: { type: "string" },
-                artworkReady: { type: ["boolean", "null"] },
-                authorityMode: { type: ["string", "null"], enum: ["keep", "revoke", null] },
+                message: { type: "string", description: "A concise natural reply. Answer any side question first, then ask exactly one genuinely missing launch question unless ready." },
+                progress: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    assetType: { type: ["string", "null"], enum: ["nft_collection", "token", null] },
+                    chain: { type: ["string", "null"], enum: ["ethereum", "solana", null] },
+                    name: { type: ["string", "null"] },
+                    symbol: { type: ["string", "null"] },
+                    description: { type: ["string", "null"] },
+                    supply: { type: ["integer", "null"], minimum: 1 },
+                    mintPrice: { type: ["string", "null"] },
+                    royaltyPercent: { type: ["number", "null"], minimum: 0, maximum: 10 },
+                    decimals: { type: ["integer", "null"], minimum: 0, maximum: 18 },
+                    purpose: { type: ["string", "null"] },
+                    artworkReady: { type: ["boolean", "null"] },
+                    authorityMode: { type: ["string", "null"], enum: ["keep", "revoke", null] },
+                    ready: { type: "boolean" },
+                  },
+                  required: ["assetType", "chain", "name", "symbol", "description", "supply", "mintPrice", "royaltyPercent", "decimals", "purpose", "artworkReady", "authorityMode", "ready"],
+                },
               },
-              required: ["assetType", "chain", "name", "symbol", "description", "supply", "mintPrice", "royaltyPercent", "decimals", "purpose", "artworkReady", "authorityMode"],
+              required: ["message", "progress"],
             },
           },
+        ] : [
+          { type: "web_search", search_context_size: "low" },
         ],
-        tool_choice: "auto",
+        tool_choice: launchActive ? { type: "function", name: "update_launch_progress" } : "auto",
         instructions: `You are Mask, the warm, sharp AI co-host inside Faceless Campus OS for adult college students.
 Answer any legitimate question directly; never force an unrelated question back to blockchain, crypto, Faceless lessons or a video.
 When the question genuinely relates to the curriculum, prefer the approved Faceless framing below, explain it simply, and mention the most relevant lesson only when useful.
@@ -136,8 +181,11 @@ For financial, medical or legal questions, give educational information, state u
 Never claim to sign, approve or execute wallet transactions. Classroom testnet assets have no real monetary value.
 You are also the conversational front door to the built-in Campus Launchpad. Never recommend an outside launchpad when a student asks to launch an NFT collection or token.
 For a launch request, explain that Campus OS can prepare it on Sepolia or Solana Devnet, then collect the requirements conversationally. Ask exactly one missing question at a time and remember answers already present in the conversation.
-For an NFT collection collect: chain, artwork readiness, name, symbol, description, supply, free-or-paid mint price, royalty percentage, and purpose. For a token collect: chain, name, symbol, description and purpose, supply, decimals, and whether mint and freeze authority should be kept for learning or revoked for fixed supply. Explain authority tradeoffs plainly.
-Only call prepare_launch after every relevant value is known. Use null for fields that do not apply. The student's connected Campus wallet is the default creator and proceeds wallet. All launches in this first workflow are testnet. After the tool is called, Campus OS will show the student an editable review and require explicit wallet approval.
+For an NFT collection collect: chain, artwork readiness, name, description, supply, free-or-paid mint price, royalty percentage, and purpose. A symbol is technical metadata here, not a marketplace requirement: never make the student stop to choose one. If absent, automatically derive a sensible 3–5 character uppercase symbol from the collection name.
+For a token collect: chain, name, symbol, description and purpose, supply, decimals, and whether mint and freeze authority should be kept for learning or revoked for fixed supply. Explain authority tradeoffs plainly.
+Before asking anything, audit the persistent progress and the full conversation. Never ask again for a non-null value unless the student explicitly corrects it. If the student asks a side question, answer it and then continue with the next missing requirement. When the student says “make your own”, “you decide” or similar, choose a sensible learning-focused value and save it rather than asking again.
+On every active launch turn, call update_launch_progress. Merge the newest answer into the supplied progress; never erase an existing value without an explicit correction. Mark ready only when all relevant values are present. Use null for fields that do not apply. The student's connected Campus wallet is the default creator and proceeds wallet. All launches in this first workflow are testnet.
+Persistent launch progress supplied by Campus OS: ${JSON.stringify(suppliedProgress)}
 Student username: @${student.username}.
 ${curriculum}
 Current optional lesson context: ${course || "none"} — ${lessonTitle || "none"}. ${lessonSummary || ""}`,
@@ -146,10 +194,12 @@ Current optional lesson context: ${course || "none"} — ${lessonTitle || "none"
     });
     const data = await upstream.json() as Record<string, unknown> & { error?: { message?: string } };
     if (!upstream.ok) throw new Error(data.error?.message || "Mask could not answer right now");
-    const launchDraft = responseLaunchDraft(data);
-    const answer = responseText(data) || (launchDraft ? `Your ${launchDraft.assetType === "nft_collection" ? "NFT collection" : "token"} draft is ready. Review every detail in the Campus Launchpad, then approve the testnet deployment with your own wallet.` : "");
+    const progressResult = responseLaunchProgress(data);
+    const progress = progressResult?.progress ?? null;
+    const launchDraft = progress?.ready && progress.assetType && progress.chain && progress.name && progress.symbol && progress.description && progress.supply && progress.purpose ? progress as LaunchDraft : responseLaunchDraft(data);
+    const answer = progressResult?.message || responseText(data) || (launchDraft ? `Your ${launchDraft.assetType === "nft_collection" ? "NFT collection" : "token"} draft is ready. Review every detail in the Campus Launchpad, then approve the testnet deployment with your own wallet.` : "");
     if (!answer) throw new Error("Mask could not answer right now");
-    return Response.json({ answer, citations: responseCitations(data), launchDraft });
+    return Response.json({ answer, citations: responseCitations(data), launchDraft, launchProgress: progress });
   } catch (error) {
     return faucetError(error);
   }

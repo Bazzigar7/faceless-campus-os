@@ -109,6 +109,22 @@ type WalletNft = {
   metadata: string;
   updatedAt: string;
 };
+type ResumableLaunch = {
+  launchId: string;
+  chain: Chain;
+  name: string;
+  symbol: string;
+  description: string;
+  purpose: string;
+  maxSupply: number;
+  mintPrice: string;
+  royaltyPercent: number;
+  creatorAddress: string;
+  metadataUrl: string;
+  image: string;
+  deployHash: string;
+  contractAddress: string;
+};
 
 type Drop = {
   id: number;
@@ -446,9 +462,37 @@ export default function OnchainLab() {
     setWalletAssetsError("");
     try {
       const response = await fetch("/api/launch", { headers: { "privy-id-token": identityToken } });
-      const result = await response.json() as { nfts?: WalletNft[]; error?: string };
+      const result = await response.json() as { nfts?: WalletNft[]; resumableLaunch?: ResumableLaunch | null; error?: string };
       if (!response.ok) throw new Error(result.error ?? "Wallet assets are unavailable");
       setWalletNfts(result.nfts ?? []);
+      if (result.resumableLaunch && !launchDeployment) {
+        const pending = result.resumableLaunch;
+        setLaunchDraft({
+          assetType: "nft_collection",
+          chain: pending.chain,
+          name: pending.name,
+          symbol: pending.symbol,
+          description: pending.description,
+          supply: pending.maxSupply,
+          mintPrice: pending.mintPrice,
+          royaltyPercent: pending.royaltyPercent,
+          decimals: null,
+          purpose: pending.purpose,
+          artworkReady: true,
+          authorityMode: null,
+        });
+        setLaunchDeployment({
+          chain: pending.chain,
+          launchId: pending.launchId,
+          metadataUrl: pending.metadataUrl,
+          deployHash: pending.deployHash,
+          contractAddress: pending.contractAddress,
+        });
+        setArtPreview(pending.image);
+        setActiveChain(pending.chain);
+        setLaunchReviewReady(true);
+        setLaunchTransactionStatus("deployed");
+      }
     } catch (error) {
       setWalletAssetsError(error instanceof Error ? error.message : "Wallet assets are unavailable");
     } finally {

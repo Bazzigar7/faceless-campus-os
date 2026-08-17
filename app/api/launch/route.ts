@@ -30,13 +30,13 @@ function isSolanaSignature(value: string) {
 export async function GET(request: Request) {
   try {
     const { db, student } = await requireCampusUser(request);
-    const launches = await db.select().from(testnetLaunches).where(and(
-      eq(testnetLaunches.userId, student.id),
-      eq(testnetLaunches.status, "minted"),
-    )).orderBy(desc(testnetLaunches.updatedAt));
+    const launches = await db.select().from(testnetLaunches)
+      .where(eq(testnetLaunches.userId, student.id))
+      .orderBy(desc(testnetLaunches.updatedAt));
     const origin = new URL(request.url).origin;
+    const resumable = launches.find((launch) => launch.status === "deployed" && launch.contractAddress && launch.deployTxHash);
     return Response.json({
-      nfts: launches.map((launch) => ({
+      nfts: launches.filter((launch) => launch.status === "minted").map((launch) => ({
         id: launch.id,
         chain: launch.chain,
         network: launch.network,
@@ -53,6 +53,22 @@ export async function GET(request: Request) {
         metadata: `${origin}/api/launch/metadata/${launch.id}`,
         updatedAt: launch.updatedAt,
       })),
+      resumableLaunch: resumable ? {
+        launchId: resumable.id,
+        chain: resumable.chain,
+        name: resumable.name,
+        symbol: resumable.symbol,
+        description: resumable.description,
+        purpose: resumable.purpose,
+        maxSupply: resumable.maxSupply,
+        mintPrice: resumable.mintPrice,
+        royaltyPercent: resumable.royaltyBps / 100,
+        creatorAddress: resumable.creatorAddress,
+        metadataUrl: `${origin}/api/launch/metadata/${resumable.id}`,
+        image: `${origin}/api/launch/artwork/${resumable.id}`,
+        deployHash: resumable.deployTxHash,
+        contractAddress: resumable.contractAddress,
+      } : null,
     });
   } catch (error) {
     return faucetError(error);

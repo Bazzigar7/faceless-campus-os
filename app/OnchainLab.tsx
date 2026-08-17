@@ -148,6 +148,9 @@ type MarketCollection = {
   primarySaleReady: boolean;
   updatedAt: string;
 };
+type RwaHolding = { id: string; assetId: string; units: number; totalCostCredits: number };
+type RwaTrade = { id: string; assetId: string; side: "buy" | "sell"; units: number; priceCredits: number; totalCredits: number; createdAt: string };
+type RwaState = { balanceCredits: number; holdings: RwaHolding[]; trades: RwaTrade[] };
 
 type Drop = {
   id: number;
@@ -252,6 +255,12 @@ const marketItems = [
   { id: 3, title: "Stable State", creator: "Team Orbit", price: "0.012", image: "/faceless-usdt.png", tag: "2 of 5" },
 ];
 
+const rwaAssets = [
+  { id: "campus_tower", symbol: "TOWER", name: "Campus Tower A", type: "IMAGINARY BUILDING", units: 1_000, price: 125, income: "Simulated rent", yield: "6.8% model", color: "violet", copy: "Split a fictional student residence into digital units and explore ownership records, rent distribution and liquidity." },
+  { id: "solar_roof", symbol: "SOLAR", name: "Solar Roof Co-op", type: "IMAGINARY ENERGY ASSET", units: 2_500, price: 64, income: "Energy credits", yield: "4.2% model", color: "green", copy: "Model how a campus solar installation could represent participation rights and simulated energy revenue." },
+  { id: "creator_studio", symbol: "STUDIO", name: "Creator Studio Equipment", type: "IMAGINARY BUSINESS ASSET", units: 500, price: 38, income: "Booking revenue", yield: "8.1% model", color: "amber", copy: "Explore fractional access to cameras and production gear through a fictional revenue-sharing structure." },
+] as const;
+
 function MaskOrb({ compact = false }: { compact?: boolean }) {
   return (
     <div className={compact ? "mask-orb live compact" : "mask-orb live"} aria-label="Mask AI co-host">
@@ -342,6 +351,10 @@ export default function OnchainLab() {
   const [selectedMarketId, setSelectedMarketId] = useState<string | null>(null);
   const [marketBuyingId, setMarketBuyingId] = useState<string | null>(null);
   const [marketPurchaseHash, setMarketPurchaseHash] = useState<string | null>(null);
+  const [marketArea, setMarketArea] = useState<"nfts" | "tokens" | "rwas">("nfts");
+  const [rwaState, setRwaState] = useState<RwaState | null>(null);
+  const [rwaBusy, setRwaBusy] = useState<string | null>(null);
+  const [rwaError, setRwaError] = useState("");
   const [usdPrices, setUsdPrices] = useState<UsdPrices | null>(null);
   const [claimedCampaigns, setClaimedCampaigns] = useState<number[]>([]);
   const [username, setUsername] = useState("aanya");
@@ -436,6 +449,11 @@ export default function OnchainLab() {
     if (active !== "market" || marketCollections.length || marketLoading) return;
     void loadMarket();
   }, [active, marketCollections.length, marketLoading]);
+
+  useEffect(() => {
+    if (active !== "market" || marketArea !== "rwas" || !identityToken || rwaState || rwaBusy) return;
+    void loadRwaState();
+  }, [active, marketArea, identityToken, rwaState, rwaBusy]);
 
   function notify(message: string) {
     setToast(message);
@@ -593,6 +611,89 @@ export default function OnchainLab() {
       setMarketError(error instanceof Error ? error.message : "The NFT could not be purchased");
     } finally {
       setMarketBuyingId(null);
+    }
+  }
+
+  async function mintCreatorSolanaCollection(collection: MarketCollection) {
+    if (!solanaWallet || solanaWallet.address !== collection.creatorAddress) return notify("Only the collection creator can mint this first Core edition");
+    setMarketBuyingId(collection.id);
+    setMarketPurchaseHash(null);
+    setMarketError("");
+    try {
+      const { umi, studentSigner } = createStudentUmi();
+      const coreCollection = await fetchCollection(umi, publicKey(collection.contractAddress));
+      const assetSigner = generateSigner(umi);
+      const builder = createCoreAsset(umi, {
+        asset: assetSigner,
+        collection: coreCollection,
+        authority: studentSigner,
+        payer: studentSigner,
+        owner: studentSigner.publicKey,
+        updateAuthority: studentSigner.publicKey,
+        name: `${collection.name} #1`,
+        uri: collection.metadata,
+        plugins: [{ type: "Edition", number: 1 }],
+      });
+      let transaction = await builder.buildWithLatestBlockhash(umi);
+      transaction = await assetSigner.signTransaction(transaction);
+      const serialized = umi.transactions.serialize(transaction);
+      const { signature } = await sendCampusSolanaTransaction(serialized);
+      const hash = getBase58Decoder().decode(signature);
+      await waitForSolanaConfirmation(hash);
+      const requestToken = await campusIdentityToken();
+      if (!requestToken) throw new Error("Your Campus session expired. Refresh the page and try once more.");
+      const record = await fetch("/api/launch", {
+        method: "POST",
+        headers: { "content-type": "application/json", "privy-id-token": requestToken },
+        body: JSON.stringify({ action: "record_mint", launchId: collection.id, transactionHash: hash, assetAddress: assetSigner.publicKey.toString() }),
+      });
+      const result = await record.json() as { error?: string };
+      if (!record.ok) throw new Error(result.error ?? "The Core NFT minted, but Campus could not save its receipt");
+      await Promise.all([loadMarket(), loadWalletAssets()]);
+      notify(`${collection.name} #1 was minted to your Solana Campus wallet`);
+    } catch (error) {
+      setMarketError(error instanceof Error ? error.message : "The first Solana edition could not be minted");
+    } finally {
+      setMarketBuyingId(null);
+    }
+  }
+
+  async function loadRwaState() {
+    const requestToken = await campusIdentityToken();
+    if (!requestToken) return;
+    setRwaBusy("loading");
+    setRwaError("");
+    try {
+      const response = await fetch("/api/rwa", { headers: { "privy-id-token": requestToken } });
+      const result = await response.json() as RwaState & { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "The RWA practice market is unavailable");
+      setRwaState(result);
+    } catch (error) {
+      setRwaError(error instanceof Error ? error.message : "The RWA practice market is unavailable");
+    } finally {
+      setRwaBusy(null);
+    }
+  }
+
+  async function tradeRwa(assetId: string, side: "buy" | "sell") {
+    const requestToken = await campusIdentityToken();
+    if (!requestToken) return notify("Sign in to use the RWA practice market");
+    setRwaBusy(`${assetId}:${side}`);
+    setRwaError("");
+    try {
+      const response = await fetch("/api/rwa", {
+        method: "POST",
+        headers: { "content-type": "application/json", "privy-id-token": requestToken },
+        body: JSON.stringify({ assetId, side, units: 1 }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "The practice trade could not be completed");
+      setRwaState(null);
+      notify(`${side === "buy" ? "Bought" : "Sold"} 1 practice unit`);
+    } catch (error) {
+      setRwaError(error instanceof Error ? error.message : "The practice trade could not be completed");
+    } finally {
+      setRwaBusy(null);
     }
   }
 
@@ -1646,16 +1747,49 @@ export default function OnchainLab() {
 
           {active === "market" && (
             <div className="page-stack market-page">
-              <section className="market-hero"><div><span className="eyebrow">LIVE CAMPUS ASSETS · TESTNET</span><h2>Made here.<br />Owned onchain.</h2><p>Discover collections launched by students, inspect their public proof and collect editions directly with your Campus wallet.</p></div><div className="market-hero-stats"><span><b>{marketCollections.length}</b><small>COLLECTIONS</small></span><span><b>{marketCollections.reduce((total, item) => total + item.minted, 0)}</b><small>NFTS MINTED</small></span><span><b>2</b><small>TEST NETWORKS</small></span></div></section>
+              <section className="market-hero"><div><span className="eyebrow">CAMPUS MARKET · TESTNET + PRACTICE</span><h2>Learn the asset.<br />Trade the idea.</h2><p>Explore student NFTs and tokens, then learn how tokenised real-world assets work through a clearly fictional practice market.</p></div><div className="market-hero-stats"><span><b>{marketCollections.length}</b><small>COLLECTIONS</small></span><span><b>{marketCollections.reduce((total, item) => total + item.minted, 0)}</b><small>NFTS MINTED</small></span><span><b>3</b><small>MARKET LABS</small></span></div></section>
+              <nav className="market-area-tabs" aria-label="Campus Market sections">
+                <button className={marketArea === "nfts" ? "active" : ""} onClick={() => setMarketArea("nfts")}><span>01</span><b>NFTs</b><small>Art & collections</small></button>
+                <button className={marketArea === "tokens" ? "active" : ""} onClick={() => { setMarketArea("tokens"); setSelectedMarketId(null); }}><span>02</span><b>Tokens</b><small>Launch & exchange</small></button>
+                <button className={marketArea === "rwas" ? "active" : ""} onClick={() => { setMarketArea("rwas"); setSelectedMarketId(null); }}><span>03</span><b>RWAs</b><small>Tokenised assets</small></button>
+              </nav>
+              {marketArea === "nfts" && <>
               <div className="market-dashboard-toolbar">
                 <div role="group" aria-label="Filter collections by network"><button className={marketFilter === "all" ? "active" : ""} onClick={() => setMarketFilter("all")}>All</button><button className={marketFilter === "ethereum" ? "active" : ""} onClick={() => setMarketFilter("ethereum")}>Ethereum</button><button className={marketFilter === "solana" ? "active" : ""} onClick={() => setMarketFilter("solana")}>Solana</button></div>
                 <label>⌕<input value={marketSearch} onChange={(event) => setMarketSearch(event.target.value)} placeholder="Search art, symbol or creator…" aria-label="Search Campus Market" /></label>
                 <button className="market-refresh" disabled={marketLoading} onClick={() => void loadMarket()}>{marketLoading ? "Refreshing…" : "Refresh ↻"}</button>
               </div>
               {marketError && <div className="market-message error">{marketError}</div>}
-              {selectedMarket && <section className="market-detail card"><img src={selectedMarket.image} alt={selectedMarket.name} /><div className="market-detail-copy"><div><span className={`market-chain ${selectedMarket.chain}`}>{selectedMarket.chain === "ethereum" ? "ETHEREUM · SEPOLIA" : "SOLANA · DEVNET"}</span><button onClick={() => setSelectedMarketId(null)} aria-label="Close collection details">×</button></div><h2>{selectedMarket.name}</h2><p>{selectedMarket.description}</p><div className="market-creator"><span className="profile-dot">{selectedMarket.creator.displayName.slice(0, 2).toUpperCase()}</span><span><small>CREATED BY</small><b>@{selectedMarket.creator.username}</b></span></div><div className="market-detail-facts"><span><small>PRICE</small><b>{Number(selectedMarket.mintPrice) === 0 ? "FREE" : `${selectedMarket.mintPrice} ${selectedMarket.chain === "ethereum" ? "ETH" : "SOL"}`}</b></span><span><small>MINTED</small><b>{selectedMarket.minted} / {selectedMarket.maxSupply}</b></span><span><small>ROYALTY</small><b>{selectedMarket.royaltyPercent}%</b></span></div><div className="market-detail-actions">{selectedMarket.primarySaleReady ? <button disabled={marketBuyingId === selectedMarket.id || selectedMarket.minted >= selectedMarket.maxSupply} onClick={() => void buyMarketCollection(selectedMarket)}>{selectedMarket.minted >= selectedMarket.maxSupply ? "Sold out" : marketBuyingId === selectedMarket.id ? "Check your wallet…" : Number(selectedMarket.mintPrice) === 0 ? "Mint free edition →" : `Collect for ${selectedMarket.mintPrice} ETH →`}</button> : <button onClick={() => notify("Solana buy and resale needs the Campus marketplace program—the collection itself is already live")}>Solana sales connector next</button>}<a href={selectedMarket.chain === "ethereum" ? `https://sepolia.etherscan.io/address/${selectedMarket.contractAddress}` : `https://core.metaplex.com/explorer/${selectedMarket.contractAddress}?env=devnet`} target="_blank" rel="noreferrer">View onchain ↗</a></div>{marketPurchaseHash && <a className="market-purchase-receipt" href={`https://sepolia.etherscan.io/tx/${marketPurchaseHash}`} target="_blank" rel="noreferrer">Purchase confirmed · view receipt ↗</a>}<small className="testnet-note">Testnet only · assets have no monetary value · your wallet approves every transaction.</small></div></section>}
+              {selectedMarket && <section className="market-detail card"><img src={selectedMarket.image} alt={selectedMarket.name} /><div className="market-detail-copy"><div><span className={`market-chain ${selectedMarket.chain}`}>{selectedMarket.chain === "ethereum" ? "ETHEREUM · SEPOLIA" : "SOLANA · DEVNET"}</span><button onClick={() => setSelectedMarketId(null)} aria-label="Close collection details">×</button></div><h2>{selectedMarket.name}</h2><p>{selectedMarket.description}</p><div className="market-creator"><span className="profile-dot">{selectedMarket.creator.displayName.slice(0, 2).toUpperCase()}</span><span><small>CREATED BY</small><b>@{selectedMarket.creator.username}</b></span></div><div className="market-detail-facts"><span><small>PRICE</small><b>{Number(selectedMarket.mintPrice) === 0 ? "FREE" : `${selectedMarket.mintPrice} ${selectedMarket.chain === "ethereum" ? "ETH" : "SOL"}`}</b></span><span><small>MINTED</small><b>{selectedMarket.minted} / {selectedMarket.maxSupply}</b></span><span><small>ROYALTY</small><b>{selectedMarket.royaltyPercent}%</b></span></div><div className="market-detail-actions">{selectedMarket.primarySaleReady ? <button disabled={marketBuyingId === selectedMarket.id || selectedMarket.minted >= selectedMarket.maxSupply} onClick={() => void buyMarketCollection(selectedMarket)}>{selectedMarket.minted >= selectedMarket.maxSupply ? "Sold out" : marketBuyingId === selectedMarket.id ? "Check your wallet…" : Number(selectedMarket.mintPrice) === 0 ? "Mint free edition →" : `Collect for ${selectedMarket.mintPrice} ETH →`}</button> : selectedMarket.chain === "solana" && solanaWallet?.address === selectedMarket.creatorAddress && selectedMarket.minted === 0 ? <button disabled={marketBuyingId === selectedMarket.id} onClick={() => void mintCreatorSolanaCollection(selectedMarket)}>{marketBuyingId === selectedMarket.id ? "Check your wallet…" : "Mint first Solana edition →"}</button> : <button onClick={() => notify("Public Solana minting needs a Candy Machine sale. The creator can mint edition one now; the public sale connector comes next.")}>Public Solana mint coming next</button>}<a href={selectedMarket.chain === "ethereum" ? `https://sepolia.etherscan.io/address/${selectedMarket.contractAddress}` : `https://core.metaplex.com/explorer/${selectedMarket.contractAddress}?env=devnet`} target="_blank" rel="noreferrer">View onchain ↗</a></div>{marketPurchaseHash && <a className="market-purchase-receipt" href={`https://sepolia.etherscan.io/tx/${marketPurchaseHash}`} target="_blank" rel="noreferrer">Purchase confirmed · view receipt ↗</a>}<small className="testnet-note">Testnet only · assets have no monetary value · your wallet approves every transaction.</small></div></section>}
               {marketLoading && marketCollections.length === 0 ? <div className="market-message">Loading student collections…</div> : visibleMarketCollections.length ? <div className="market-grid live-market-grid">{visibleMarketCollections.map((collection) => <article className="market-card" key={collection.id}><button className="market-card-open" onClick={() => { setSelectedMarketId(collection.id); setMarketPurchaseHash(null); window.scrollTo({ top: 0, behavior: "smooth" }); }} aria-label={`View ${collection.name}`}><div className="market-image"><img src={collection.image} alt={collection.name} /><span>{collection.chain === "ethereum" ? "SEP" : "SOL"} · {collection.standard}</span></div><div className="market-meta"><div><h3>{collection.name}</h3><p>by @{collection.creator.username}</p></div><span><small>{collection.minted} / {collection.maxSupply} MINTED</small><b>{Number(collection.mintPrice) === 0 ? "FREE" : `${collection.mintPrice} ${collection.chain === "ethereum" ? "ETH" : "SOL"}`}</b></span></div><div className="market-card-action">View collection →</div></button></article>)}</div> : <div className="market-message"><b>No collections match this view.</b><span>Try another network or search.</span></div>}
               <section className="market-secondary card"><div><span className="eyebrow">NEXT MARKET LAYER</span><h3>List, buy and resell safely.</h3><p>Secondary sales need an atomic marketplace contract so payment and ownership move together. We’ll add this after the public discovery and primary mint flow is proven.</p></div><button onClick={() => setActive("wallet")}>View my assets →</button></section>
+              </>}
+              {marketArea === "tokens" && <div className="token-market-stack">
+                <section className="token-market-intro card"><div><span className="eyebrow">TOKEN LAB · COMING NEXT</span><h2>Launch a token.<br />Understand its economy.</h2><p>Students will define supply, decimals and authority, deploy on Sepolia or Solana Devnet, then transfer and exchange testnet tokens with classmates.</p></div><button onClick={() => setActive("mask")}>Plan a token with Mask →</button></section>
+                <div className="token-flow-grid">
+                  {[{ n: "01", title: "Design", copy: "Choose the token’s purpose, supply, distribution and permissions." }, { n: "02", title: "Deploy", copy: "Review the exact testnet transaction in the Campus wallet." }, { n: "03", title: "Distribute", copy: "Send tokens by Campus username and inspect every receipt." }, { n: "04", title: "Exchange", copy: "Learn liquidity, pricing and slippage using assets with no real value." }].map((item) => <article className="card" key={item.n}><span>{item.n}</span><h3>{item.title}</h3><p>{item.copy}</p></article>)}
+                </div>
+                <section className="token-safety card"><div><span>TESTNET FIRST</span><b>No real-money trading is enabled.</b></div><p>The live token launcher and swap engine will be connected only after transaction review and classroom safety controls are ready.</p></section>
+              </div>}
+              {marketArea === "rwas" && <div className="rwa-market-stack">
+                <section className="rwa-intro card"><div><span className="eyebrow">RWA PRACTICE MARKET · FICTIONAL ASSETS</span><h2>Turn a thing into units.<br />Learn what ownership means.</h2><p>Trade imaginary tokenised assets with practice credits, see how fractional ownership changes a portfolio and question what the token legally represents.</p><div className="rwa-warning">SIMULATION ONLY · NO LEGAL OWNERSHIP · NO REAL VALUE</div></div><aside><small>PRACTICE BALANCE</small><strong>{(rwaState?.balanceCredits ?? 10000).toLocaleString()}</strong><span>Campus credits</span></aside></section>
+                <section className="rwa-learning-strip">
+                  {["Choose the asset", "Define the rights", "Split into units", "Trade + inspect"].map((step, index) => <span key={step}><b>{String(index + 1).padStart(2, "0")}</b>{step}</span>)}
+                </section>
+                {rwaError && <div className="market-message error">{rwaError}</div>}
+                <div className="rwa-grid">
+                  {rwaAssets.map((asset) => {
+                    const holding = rwaState?.holdings.find((item) => item.assetId === asset.id);
+                    const owned = holding?.units ?? 0;
+                    return <article className="rwa-card card" key={asset.id}><div className={`rwa-art ${asset.color}`}><span>{asset.symbol}</span><b>{asset.id === "campus_tower" ? "BUILDING" : asset.id === "solar_roof" ? "ENERGY" : "EQUIPMENT"}</b></div><div className="rwa-card-copy"><div className="rwa-card-head"><span><small>{asset.type}</small><h3>{asset.name}</h3></span><em>FICTIONAL</em></div><p>{asset.copy}</p><div className="rwa-facts"><span><small>UNIT PRICE</small><b>{asset.price} credits</b></span><span><small>YOUR UNITS</small><b>{owned}</b></span><span><small>INCOME MODEL</small><b>{asset.yield}</b></span></div><div className="rwa-rights"><small>WHAT THE PRACTICE TOKEN REPRESENTS</small><p>{asset.income}; it is not a deed, security or legal claim.</p></div><div className="rwa-trade-actions"><button disabled={Boolean(rwaBusy)} onClick={() => void tradeRwa(asset.id, "buy")}>{rwaBusy === `${asset.id}:buy` ? "Buying…" : "Buy 1 unit"}</button><button disabled={Boolean(rwaBusy) || owned < 1} onClick={() => void tradeRwa(asset.id, "sell")}>{rwaBusy === `${asset.id}:sell` ? "Selling…" : "Sell 1 unit"}</button></div></div></article>;
+                  })}
+                </div>
+                <div className="rwa-lower-grid">
+                  <section className="rwa-portfolio card"><span className="eyebrow">YOUR PRACTICE PORTFOLIO</span><h3>{rwaState?.holdings.reduce((total, holding) => total + holding.units, 0) ?? 0} tokenised units</h3>{rwaState?.holdings.length ? rwaState.holdings.map((holding) => { const asset = rwaAssets.find((item) => item.id === holding.assetId); return <div key={holding.assetId}><span>{asset?.name ?? holding.assetId}</span><b>{holding.units} × {asset?.price ?? 0} credits</b></div>; }) : <p>Buy a practice unit to see how fractional assets appear in a portfolio.</p>}</section>
+                  <section className="rwa-activity card"><span className="eyebrow">RECENT PRACTICE TRADES</span>{rwaState?.trades.length ? rwaState.trades.slice(0, 5).map((trade) => <div key={trade.id}><span><b>{trade.side.toUpperCase()}</b>{rwaAssets.find((item) => item.id === trade.assetId)?.symbol ?? trade.assetId}</span><strong>{trade.totalCredits} credits</strong></div>) : <p>No trades yet. Every buy and sell will appear here.</p>}</section>
+                </div>
+                <section className="rwa-create card"><div><span className="eyebrow">BUILD THE NEXT CASE STUDY</span><h3>Tokenise an imaginary cinema, farm or creator studio.</h3><p>Mask can help define the asset, token rights, supply, income story and the risks students should understand before anything is deployed.</p></div><button onClick={() => setActive("mask")}>Design an RWA with Mask →</button></section>
+              </div>}
             </div>
           )}
 

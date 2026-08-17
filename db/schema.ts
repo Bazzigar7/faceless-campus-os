@@ -168,6 +168,32 @@ export const marketPurchases = sqliteTable("market_purchases", {
   index("idx_market_purchases_buyer_time").on(table.buyerUserId, table.createdAt),
 ]);
 
+export const rwaHoldings = sqliteTable("rwa_holdings", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  assetId: text("asset_id").notNull(),
+  units: integer("units").notNull().default(0),
+  totalCostCredits: integer("total_cost_credits").notNull().default(0),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_rwa_holdings_user_asset").on(table.userId, table.assetId),
+  index("idx_rwa_holdings_user").on(table.userId),
+]);
+
+export const rwaTrades = sqliteTable("rwa_trades", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  assetId: text("asset_id").notNull(),
+  side: text("side", { enum: ["buy", "sell"] }).notNull(),
+  units: integer("units").notNull(),
+  priceCredits: integer("price_credits").notNull(),
+  totalCredits: integer("total_credits").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_rwa_trades_user_time").on(table.userId, table.createdAt),
+  index("idx_rwa_trades_asset_time").on(table.assetId, table.createdAt),
+]);
+
 export const campaigns = sqliteTable("campaigns", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),

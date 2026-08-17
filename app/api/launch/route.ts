@@ -1,7 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { encodeDeployData, isAddress, parseEther, type Hex } from "viem";
 import artifact from "../../../contracts/artifacts/CampusEdition.json";
-import { testnetLaunches, wallets } from "../../../db/schema";
+import { marketPurchases, testnetLaunches, wallets } from "../../../db/schema";
 import { faucetError, requireCampusUser } from "../../../lib/faucet-auth";
 import { getArtworkBucket } from "../../../lib/artwork-storage";
 
@@ -33,10 +33,15 @@ export async function GET(request: Request) {
     const launches = await db.select().from(testnetLaunches)
       .where(eq(testnetLaunches.userId, student.id))
       .orderBy(desc(testnetLaunches.updatedAt));
+    const purchased = await db.select({ purchase: marketPurchases, launch: testnetLaunches })
+      .from(marketPurchases)
+      .innerJoin(testnetLaunches, eq(marketPurchases.collectionId, testnetLaunches.id))
+      .where(eq(marketPurchases.buyerUserId, student.id))
+      .orderBy(desc(marketPurchases.createdAt));
     const origin = new URL(request.url).origin;
     const resumable = launches.find((launch) => launch.status === "deployed" && launch.contractAddress && launch.deployTxHash);
     return Response.json({
-      nfts: launches.filter((launch) => launch.status === "minted").map((launch) => ({
+      nfts: [...launches.filter((launch) => launch.status === "minted").map((launch) => ({
         id: launch.id,
         chain: launch.chain,
         network: launch.network,
@@ -52,7 +57,23 @@ export async function GET(request: Request) {
         image: `${origin}/api/launch/artwork/${launch.id}`,
         metadata: `${origin}/api/launch/metadata/${launch.id}`,
         updatedAt: launch.updatedAt,
-      })),
+      })), ...purchased.map(({ purchase, launch }) => ({
+        id: `purchase:${purchase.id}`,
+        chain: launch.chain,
+        network: launch.network,
+        standard: launch.standard.toUpperCase(),
+        name: launch.name,
+        symbol: launch.symbol,
+        description: launch.description,
+        quantity: purchase.quantity,
+        maxSupply: launch.maxSupply,
+        contractAddress: launch.contractAddress,
+        assetAddress: null,
+        mintTransactionHash: purchase.transactionHash,
+        image: `${origin}/api/launch/artwork/${launch.id}`,
+        metadata: `${origin}/api/launch/metadata/${launch.id}`,
+        updatedAt: purchase.createdAt,
+      }))],
       resumableLaunch: resumable ? {
         launchId: resumable.id,
         chain: resumable.chain,

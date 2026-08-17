@@ -24,7 +24,7 @@ import { createPublicClient, encodeFunctionData, http, parseEther, type Hex } fr
 import { sepolia } from "viem/chains";
 import LiveMask from "./LiveMask";
 
-type Tab = "home" | "learn" | "mask" | "wallet" | "create" | "games" | "tools" | "campaigns" | "launchpad" | "passport" | "drops" | "admin";
+type Tab = "home" | "learn" | "mask" | "wallet" | "create" | "games" | "tools" | "campaigns" | "launchpad" | "market" | "passport" | "drops" | "admin";
 type Course = "blockchain" | "bitcoin" | "ethereum";
 type Chain = "ethereum" | "solana";
 type LaunchMode = "testnet" | "mainnet";
@@ -125,6 +125,29 @@ type ResumableLaunch = {
   deployHash: string;
   contractAddress: string;
 };
+type MarketCollection = {
+  id: string;
+  chain: Chain;
+  network: "sepolia" | "solana_devnet";
+  standard: string;
+  name: string;
+  symbol: string;
+  description: string;
+  purpose: string;
+  maxSupply: number;
+  minted: number;
+  mintPrice: string;
+  royaltyPercent: number;
+  creator: { username: string; displayName: string };
+  creatorAddress: string;
+  contractAddress: string;
+  assetAddress: string | null;
+  image: string;
+  metadata: string;
+  deployTransactionHash: string;
+  primarySaleReady: boolean;
+  updatedAt: string;
+};
 
 type Drop = {
   id: number;
@@ -145,6 +168,7 @@ const navItems: { id: Tab; label: string; mark: string }[] = [
   { id: "tools", label: "Creator tools", mark: "✦" },
   { id: "campaigns", label: "Campaigns", mark: "◎" },
   { id: "launchpad", label: "Launchpad", mark: "↗" },
+  { id: "market", label: "Market", mark: "◈" },
   { id: "passport", label: "My passport", mark: "◇" },
   { id: "admin", label: "Educator view", mark: "▦" },
 ];
@@ -310,6 +334,14 @@ export default function OnchainLab() {
   const [walletNfts, setWalletNfts] = useState<WalletNft[]>([]);
   const [walletAssetsLoading, setWalletAssetsLoading] = useState(false);
   const [walletAssetsError, setWalletAssetsError] = useState("");
+  const [marketCollections, setMarketCollections] = useState<MarketCollection[]>([]);
+  const [marketLoading, setMarketLoading] = useState(false);
+  const [marketError, setMarketError] = useState("");
+  const [marketFilter, setMarketFilter] = useState<"all" | Chain>("all");
+  const [marketSearch, setMarketSearch] = useState("");
+  const [selectedMarketId, setSelectedMarketId] = useState<string | null>(null);
+  const [marketBuyingId, setMarketBuyingId] = useState<string | null>(null);
+  const [marketPurchaseHash, setMarketPurchaseHash] = useState<string | null>(null);
   const [usdPrices, setUsdPrices] = useState<UsdPrices | null>(null);
   const [claimedCampaigns, setClaimedCampaigns] = useState<number[]>([]);
   const [username, setUsername] = useState("aanya");
@@ -352,6 +384,13 @@ export default function OnchainLab() {
   const selectedComplete = selectedProgress?.status === "completed";
 
   const title = useMemo(() => navItems.find((item) => item.id === active)?.label ?? "Home", [active]);
+  const visibleMarketCollections = marketCollections.filter((collection) => {
+    const chainMatches = marketFilter === "all" || collection.chain === marketFilter;
+    const search = marketSearch.trim().toLowerCase();
+    const textMatches = !search || `${collection.name} ${collection.symbol} ${collection.creator.username} ${collection.creator.displayName}`.toLowerCase().includes(search);
+    return chainMatches && textMatches;
+  });
+  const selectedMarket = marketCollections.find((collection) => collection.id === selectedMarketId) ?? null;
 
   useEffect(() => {
     identityTokenRef.current = identityToken;
@@ -392,6 +431,11 @@ export default function OnchainLab() {
     void loadLearningState();
     void loadWalletAssets();
   }, [authenticated, identityToken, profileStatus]);
+
+  useEffect(() => {
+    if (active !== "market" || marketCollections.length || marketLoading) return;
+    void loadMarket();
+  }, [active, marketCollections.length, marketLoading]);
 
   function notify(message: string) {
     setToast(message);
@@ -497,6 +541,58 @@ export default function OnchainLab() {
       setWalletAssetsError(error instanceof Error ? error.message : "Wallet assets are unavailable");
     } finally {
       setWalletAssetsLoading(false);
+    }
+  }
+
+  async function loadMarket() {
+    setMarketLoading(true);
+    setMarketError("");
+    try {
+      const response = await fetch("/api/market");
+      const result = await response.json() as { collections?: MarketCollection[]; error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Campus Market is unavailable");
+      setMarketCollections(result.collections ?? []);
+    } catch (error) {
+      setMarketError(error instanceof Error ? error.message : "Campus Market is unavailable");
+    } finally {
+      setMarketLoading(false);
+    }
+  }
+
+  async function buyMarketCollection(collection: MarketCollection) {
+    if (collection.chain !== "ethereum") return notify("Solana secondary sales are the next marketplace connector");
+    if (!authenticated || !identityToken) return notify("Sign in before collecting an NFT");
+    if (!ethereumWallet) return notify("Your Campus Ethereum wallet is unavailable");
+    if (collection.minted >= collection.maxSupply) return notify("This edition is sold out");
+    setMarketBuyingId(collection.id);
+    setMarketPurchaseHash(null);
+    try {
+      await ethereumWallet.switchChain(11155111);
+      const value = parseEther(collection.mintPrice || "0");
+      const data = encodeFunctionData({ abi: campusEditionMintAbi, functionName: "mint", args: [1n] });
+      const { hash } = await sendEthereumTransaction(
+        { to: collection.contractAddress as Hex, data, value, chainId: 11155111 },
+        { address: ethereumWallet.address, uiOptions: { showWalletUIs: true } },
+      );
+      const receipt = await sepoliaPublicClient.waitForTransactionReceipt({ hash: hash as Hex });
+      if (receipt.status !== "success") throw new Error("Sepolia rejected the mint. No NFT was purchased.");
+      setMarketPurchaseHash(hash);
+      const requestToken = await campusIdentityToken();
+      if (requestToken) {
+        const record = await fetch("/api/market", {
+          method: "POST",
+          headers: { "content-type": "application/json", "privy-id-token": requestToken },
+          body: JSON.stringify({ collectionId: collection.id, transactionHash: hash, buyerAddress: ethereumWallet.address }),
+        });
+        const recorded = await record.json() as { error?: string };
+        if (!record.ok) throw new Error(recorded.error ?? "The NFT minted, but Campus could not save the receipt");
+      }
+      await Promise.all([loadMarket(), loadWalletAssets()]);
+      notify(`${collection.name} was minted to your Campus wallet`);
+    } catch (error) {
+      setMarketError(error instanceof Error ? error.message : "The NFT could not be purchased");
+    } finally {
+      setMarketBuyingId(null);
     }
   }
 
@@ -1544,11 +1640,22 @@ export default function OnchainLab() {
               </section>}
               <div className="launch-mode-switch" role="group" aria-label="Launch network"><button className={launchMode === "testnet" ? "active" : ""} onClick={() => setLaunchMode("testnet")}><b>Testnet studio</b><small>Free practice · classroom wallets</small></button><button className={launchMode === "mainnet" ? "active" : ""} onClick={() => setLaunchMode("mainnet")}><b>Mainnet launch</b><small>Real fees · educator-gated</small></button></div>
               {launchMode === "mainnet" && <section className="mainnet-gate card"><div><span className="gate-mark">✓</span><div><span className="eyebrow">SUPERVISED MAINNET PATH</span><h3>Prove the launch before paying real fees.</h3><p>Complete wallet safety, publish the collection on testnet, verify ownership and request an educator review. A final wallet confirmation is always required.</p></div></div><ol><li><span>1</span>Safety lesson</li><li><span>2</span>Test launch</li><li><span>3</span>Ownership check</li><li><span>4</span>Educator review</li></ol><button onClick={() => notify("Mainnet review request added to the educator queue")}>Request mainnet review →</button><small>No custodial mainnet wallet is created automatically. Students connect an external wallet and approve real fees themselves.</small></section>}
-              <div className="market-toolbar"><div><button className="active">All work</button><button>1 of 1</button><button>Open editions</button><button>New collections</button></div><button className="sort">Newest first⌄</button></div>
-              <div className="market-grid">
-                {marketItems.map((item, index) => <article className="market-card" key={item.id}><div className="market-image"><img src={item.image} alt={item.title} /><span>{item.tag} · {index === 1 ? "SOL" : "ETH"}</span></div><div className="market-meta"><div><h3>{item.title}</h3><p>by {item.creator}</p></div><span><small>{launchMode === "testnet" ? "TEST PRICE" : "DISPLAY PRICE"}</small><b>{index === 1 ? "0.12 SOL" : `${item.price} Ξ`}</b></span></div><button onClick={() => notify(launchMode === "testnet" ? `${item.title} added to your testnet collection` : `${item.title} requires wallet confirmation and a real network fee`)}>{launchMode === "testnet" ? `Collect on ${index === 1 ? "Solana" : "Sepolia"}` : "Review mainnet checkout"}</button></article>)}
-                <article className="market-card upcoming"><div><span>＋</span><h3>Your work could be here.</h3><p>Complete the Creator Studio quest to launch.</p><button onClick={() => setActive("create")}>Start creating</button></div></article>
+              <section className="launch-to-market card"><div><span className="eyebrow">AFTER THE LAUNCH</span><h3>Every deployed collection enters the Campus Market.</h3><p>Students can discover the work, inspect its on-chain proof and collect available Sepolia editions with their own wallet.</p></div><button onClick={() => setActive("market")}>Open Campus Market →</button></section>
+            </div>
+          )}
+
+          {active === "market" && (
+            <div className="page-stack market-page">
+              <section className="market-hero"><div><span className="eyebrow">LIVE CAMPUS ASSETS · TESTNET</span><h2>Made here.<br />Owned onchain.</h2><p>Discover collections launched by students, inspect their public proof and collect editions directly with your Campus wallet.</p></div><div className="market-hero-stats"><span><b>{marketCollections.length}</b><small>COLLECTIONS</small></span><span><b>{marketCollections.reduce((total, item) => total + item.minted, 0)}</b><small>NFTS MINTED</small></span><span><b>2</b><small>TEST NETWORKS</small></span></div></section>
+              <div className="market-dashboard-toolbar">
+                <div role="group" aria-label="Filter collections by network"><button className={marketFilter === "all" ? "active" : ""} onClick={() => setMarketFilter("all")}>All</button><button className={marketFilter === "ethereum" ? "active" : ""} onClick={() => setMarketFilter("ethereum")}>Ethereum</button><button className={marketFilter === "solana" ? "active" : ""} onClick={() => setMarketFilter("solana")}>Solana</button></div>
+                <label>⌕<input value={marketSearch} onChange={(event) => setMarketSearch(event.target.value)} placeholder="Search art, symbol or creator…" aria-label="Search Campus Market" /></label>
+                <button className="market-refresh" disabled={marketLoading} onClick={() => void loadMarket()}>{marketLoading ? "Refreshing…" : "Refresh ↻"}</button>
               </div>
+              {marketError && <div className="market-message error">{marketError}</div>}
+              {selectedMarket && <section className="market-detail card"><img src={selectedMarket.image} alt={selectedMarket.name} /><div className="market-detail-copy"><div><span className={`market-chain ${selectedMarket.chain}`}>{selectedMarket.chain === "ethereum" ? "ETHEREUM · SEPOLIA" : "SOLANA · DEVNET"}</span><button onClick={() => setSelectedMarketId(null)} aria-label="Close collection details">×</button></div><h2>{selectedMarket.name}</h2><p>{selectedMarket.description}</p><div className="market-creator"><span className="profile-dot">{selectedMarket.creator.displayName.slice(0, 2).toUpperCase()}</span><span><small>CREATED BY</small><b>@{selectedMarket.creator.username}</b></span></div><div className="market-detail-facts"><span><small>PRICE</small><b>{Number(selectedMarket.mintPrice) === 0 ? "FREE" : `${selectedMarket.mintPrice} ${selectedMarket.chain === "ethereum" ? "ETH" : "SOL"}`}</b></span><span><small>MINTED</small><b>{selectedMarket.minted} / {selectedMarket.maxSupply}</b></span><span><small>ROYALTY</small><b>{selectedMarket.royaltyPercent}%</b></span></div><div className="market-detail-actions">{selectedMarket.primarySaleReady ? <button disabled={marketBuyingId === selectedMarket.id || selectedMarket.minted >= selectedMarket.maxSupply} onClick={() => void buyMarketCollection(selectedMarket)}>{selectedMarket.minted >= selectedMarket.maxSupply ? "Sold out" : marketBuyingId === selectedMarket.id ? "Check your wallet…" : Number(selectedMarket.mintPrice) === 0 ? "Mint free edition →" : `Collect for ${selectedMarket.mintPrice} ETH →`}</button> : <button onClick={() => notify("Solana buy and resale needs the Campus marketplace program—the collection itself is already live")}>Solana sales connector next</button>}<a href={selectedMarket.chain === "ethereum" ? `https://sepolia.etherscan.io/address/${selectedMarket.contractAddress}` : `https://core.metaplex.com/explorer/${selectedMarket.contractAddress}?env=devnet`} target="_blank" rel="noreferrer">View onchain ↗</a></div>{marketPurchaseHash && <a className="market-purchase-receipt" href={`https://sepolia.etherscan.io/tx/${marketPurchaseHash}`} target="_blank" rel="noreferrer">Purchase confirmed · view receipt ↗</a>}<small className="testnet-note">Testnet only · assets have no monetary value · your wallet approves every transaction.</small></div></section>}
+              {marketLoading && marketCollections.length === 0 ? <div className="market-message">Loading student collections…</div> : visibleMarketCollections.length ? <div className="market-grid live-market-grid">{visibleMarketCollections.map((collection) => <article className="market-card" key={collection.id}><button className="market-card-open" onClick={() => { setSelectedMarketId(collection.id); setMarketPurchaseHash(null); window.scrollTo({ top: 0, behavior: "smooth" }); }} aria-label={`View ${collection.name}`}><div className="market-image"><img src={collection.image} alt={collection.name} /><span>{collection.chain === "ethereum" ? "SEP" : "SOL"} · {collection.standard}</span></div><div className="market-meta"><div><h3>{collection.name}</h3><p>by @{collection.creator.username}</p></div><span><small>{collection.minted} / {collection.maxSupply} MINTED</small><b>{Number(collection.mintPrice) === 0 ? "FREE" : `${collection.mintPrice} ${collection.chain === "ethereum" ? "ETH" : "SOL"}`}</b></span></div><div className="market-card-action">View collection →</div></button></article>)}</div> : <div className="market-message"><b>No collections match this view.</b><span>Try another network or search.</span></div>}
+              <section className="market-secondary card"><div><span className="eyebrow">NEXT MARKET LAYER</span><h3>List, buy and resell safely.</h3><p>Secondary sales need an atomic marketplace contract so payment and ownership move together. We’ll add this after the public discovery and primary mint flow is proven.</p></div><button onClick={() => setActive("wallet")}>View my assets →</button></section>
             </div>
           )}
 
@@ -1605,7 +1712,7 @@ export default function OnchainLab() {
           )}
         </div>
 
-        <nav className="mobile-nav" aria-label="Mobile navigation">{navItems.filter((item) => ["home", "learn", "mask", "tools", "campaigns"].includes(item.id)).map((item) => <button key={item.id} className={active === item.id ? "active" : ""} onClick={() => setActive(item.id)}><span>{item.mark}</span>{item.id === "tools" ? "Tools" : item.label.split(" ")[0]}</button>)}</nav>
+        <nav className="mobile-nav" aria-label="Mobile navigation">{navItems.filter((item) => ["home", "learn", "mask", "market", "campaigns"].includes(item.id)).map((item) => <button key={item.id} className={active === item.id ? "active" : ""} onClick={() => setActive(item.id)}><span>{item.mark}</span>{item.label.split(" ")[0]}</button>)}</nav>
       </section>
 
       {!onboarded && (

@@ -154,6 +154,20 @@ export const testnetLaunches = sqliteTable("testnet_launches", {
   uniqueIndex("idx_testnet_launches_deploy_tx").on(table.deployTxHash),
 ]);
 
+export const marketPurchases = sqliteTable("market_purchases", {
+  id: text("id").primaryKey(),
+  collectionId: text("collection_id").notNull().references(() => testnetLaunches.id, { onDelete: "cascade" }),
+  buyerUserId: text("buyer_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  buyerAddress: text("buyer_address").notNull(),
+  quantity: integer("quantity").notNull().default(1),
+  transactionHash: text("transaction_hash").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_market_purchases_tx").on(table.transactionHash),
+  index("idx_market_purchases_collection_time").on(table.collectionId, table.createdAt),
+  index("idx_market_purchases_buyer_time").on(table.buyerUserId, table.createdAt),
+]);
+
 export const campaigns = sqliteTable("campaigns", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),

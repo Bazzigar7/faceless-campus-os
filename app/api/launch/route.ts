@@ -68,7 +68,7 @@ export async function GET(request: Request) {
         quantity: purchase.quantity,
         maxSupply: launch.maxSupply,
         contractAddress: launch.contractAddress,
-        assetAddress: null,
+        assetAddress: purchase.assetAddress,
         mintTransactionHash: purchase.transactionHash,
         image: `${origin}/api/launch/artwork/${launch.id}`,
         metadata: `${origin}/api/launch/metadata/${launch.id}`,
@@ -102,7 +102,7 @@ export async function POST(request: Request) {
     const body = await request.json() as Record<string, unknown>;
     const action = textValue(body.action, 30) || "prepare";
 
-    if (action === "record_deploy" || action === "record_mint") {
+    if (action === "record_deploy" || action === "record_mint" || action === "record_sale") {
       const launchId = textValue(body.launchId, 80);
       const [launch] = await db.select().from(testnetLaunches).where(and(eq(testnetLaunches.id, launchId), eq(testnetLaunches.userId, student.id))).limit(1);
       if (!launch) return Response.json({ error: "Launch draft not found" }, { status: 404 });
@@ -115,6 +115,13 @@ export async function POST(request: Request) {
         if (!validAddress) return Response.json({ error: `${launch.chain === "ethereum" ? "Contract" : "Collection"} address is missing from the deployment receipt` }, { status: 400 });
         await db.update(testnetLaunches).set({ status: "deployed", deployTxHash: transactionHash, contractAddress, updatedAt: new Date().toISOString() }).where(eq(testnetLaunches.id, launch.id));
         return Response.json({ ok: true, status: "deployed" });
+      }
+      if (action === "record_sale") {
+        if (launch.chain !== "solana" || !launch.contractAddress) return Response.json({ error: "A Solana collection must be deployed before its public mint" }, { status: 400 });
+        const candyMachineAddress = textValue(body.candyMachineAddress, 64);
+        if (!isSolanaAddress(candyMachineAddress)) return Response.json({ error: "The Core Candy Machine address is missing" }, { status: 400 });
+        await db.update(testnetLaunches).set({ candyMachineAddress, candyMachineTxHash: transactionHash, updatedAt: new Date().toISOString() }).where(eq(testnetLaunches.id, launch.id));
+        return Response.json({ ok: true, status: "sale_ready" });
       }
       const assetAddress = textValue(body.assetAddress, 64);
       if (launch.chain === "solana" && !isSolanaAddress(assetAddress)) return Response.json({ error: "The new Solana NFT address is missing" }, { status: 400 });

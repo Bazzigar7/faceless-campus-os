@@ -59,10 +59,12 @@ export async function GET(request: Request) {
           creatorAddress: launch.creatorAddress,
           contractAddress: launch.contractAddress,
           assetAddress: launch.assetAddress,
+          candyMachineAddress: launch.candyMachineAddress,
+          candyMachineTransactionHash: launch.candyMachineTxHash,
           image: `${origin}/api/launch/artwork/${launch.id}`,
           metadata: `${origin}/api/launch/metadata/${launch.id}`,
           deployTransactionHash: launch.deployTxHash,
-          primarySaleReady: launch.chain === "ethereum",
+          primarySaleReady: launch.chain === "ethereum" || Boolean(launch.candyMachineAddress),
           updatedAt: launch.updatedAt,
         }];
       }),
@@ -75,26 +77,49 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const { db, student } = await requireCampusUser(request);
-    const body = await request.json() as { collectionId?: string; transactionHash?: string; buyerAddress?: string };
+    const body = await request.json() as { collectionId?: string; transactionHash?: string; buyerAddress?: string; assetAddress?: string };
     const collectionId = String(body.collectionId || "").trim().slice(0, 80);
     const transactionHash = String(body.transactionHash || "").trim();
     const buyerAddress = String(body.buyerAddress || "").trim();
-    if (!/^0x[0-9a-fA-F]{64}$/.test(transactionHash) || !isAddress(buyerAddress)) {
-      return Response.json({ error: "The Sepolia purchase receipt is invalid" }, { status: 400 });
-    }
-    const [collection] = await db.select().from(testnetLaunches).where(and(
-      eq(testnetLaunches.id, collectionId),
-      eq(testnetLaunches.chain, "ethereum"),
-    )).limit(1);
-    if (!collection?.contractAddress || !isAddress(collection.contractAddress)) {
-      return Response.json({ error: "This collection is not available for Sepolia minting" }, { status: 404 });
+    const assetAddress = String(body.assetAddress || "").trim();
+    const [collection] = await db.select().from(testnetLaunches).where(eq(testnetLaunches.id, collectionId)).limit(1);
+    if (!collection?.contractAddress) return Response.json({ error: "This collection is not available for minting" }, { status: 404 });
+    const isSolana = collection.chain === "solana";
+    const validSolanaAddress = (value: string) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value);
+    const validSolanaSignature = (value: string) => /^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(value);
+    if (isSolana ? (!validSolanaSignature(transactionHash) || !validSolanaAddress(buyerAddress) || !validSolanaAddress(assetAddress)) : (!/^0x[0-9a-fA-F]{64}$/.test(transactionHash) || !isAddress(buyerAddress))) {
+      return Response.json({ error: `The ${isSolana ? "Solana Devnet" : "Sepolia"} mint receipt is invalid` }, { status: 400 });
     }
     const [campusWallet] = await db.select().from(wallets).where(and(
       eq(wallets.userId, student.id),
-      eq(wallets.chain, "ethereum"),
+      eq(wallets.chain, collection.chain),
       eq(wallets.address, buyerAddress),
     )).limit(1);
-    if (!campusWallet) return Response.json({ error: "Use your connected Campus Ethereum wallet" }, { status: 403 });
+    if (!campusWallet) return Response.json({ error: `Use your connected Campus ${isSolana ? "Solana" : "Ethereum"} wallet` }, { status: 403 });
+
+    if (isSolana) {
+      if (!collection.candyMachineAddress) return Response.json({ error: "This Solana public mint is not open yet" }, { status: 409 });
+      const rpcResponse = await fetch("https://api.devnet.solana.com", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getTransaction", params: [transactionHash, { encoding: "jsonParsed", commitment: "confirmed", maxSupportedTransactionVersion: 0 }] }),
+      });
+      const rpc = await rpcResponse.json() as { result?: { meta?: { err?: unknown }; transaction?: { message?: { accountKeys?: Array<string | { pubkey?: string; signer?: boolean }> } } }; error?: { message?: string } };
+      if (!rpcResponse.ok || rpc.error) return Response.json({ error: rpc.error?.message ?? "Solana Devnet could not verify this mint" }, { status: 502 });
+      const accountKeys = rpc.result?.transaction?.message?.accountKeys ?? [];
+      const addresses = accountKeys.map((key) => typeof key === "string" ? key : key.pubkey || "");
+      const buyerSigned = accountKeys.some((key) => typeof key === "object" && key.pubkey === buyerAddress && key.signer);
+      if (!rpc.result || rpc.result.meta?.err || !buyerSigned || !addresses.includes(collection.candyMachineAddress) || !addresses.includes(collection.contractAddress) || !addresses.includes(assetAddress)) {
+        return Response.json({ error: "The on-chain Solana mint does not match this collection and Campus wallet" }, { status: 400 });
+      }
+      await db.insert(marketPurchases).values({
+        id: crypto.randomUUID(), collectionId, buyerUserId: student.id, buyerAddress, quantity: 1,
+        transactionHash, assetAddress,
+      }).onConflictDoNothing();
+      return Response.json({ ok: true, assetAddress });
+    }
+
+    if (!isAddress(collection.contractAddress)) return Response.json({ error: "This collection is not available for Sepolia minting" }, { status: 404 });
 
     const receipt = await sepoliaClient.getTransactionReceipt({ hash: transactionHash as Hex });
     const transaction = await sepoliaClient.getTransaction({ hash: transactionHash as Hex });

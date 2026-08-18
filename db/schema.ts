@@ -145,6 +145,8 @@ export const testnetLaunches = sqliteTable("testnet_launches", {
   contractAddress: text("contract_address"),
   mintTxHash: text("mint_tx_hash"),
   assetAddress: text("asset_address"),
+  candyMachineAddress: text("candy_machine_address"),
+  candyMachineTxHash: text("candy_machine_tx_hash"),
   errorMessage: text("error_message"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -161,6 +163,7 @@ export const marketPurchases = sqliteTable("market_purchases", {
   buyerAddress: text("buyer_address").notNull(),
   quantity: integer("quantity").notNull().default(1),
   transactionHash: text("transaction_hash").notNull(),
+  assetAddress: text("asset_address"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
   uniqueIndex("idx_market_purchases_tx").on(table.transactionHash),

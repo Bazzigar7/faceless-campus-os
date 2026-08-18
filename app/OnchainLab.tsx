@@ -18,7 +18,8 @@ import {
 } from "@solana/kit";
 import { getTransferSolInstruction } from "@solana-program/system";
 import { create as createCoreAsset, createCollection as createCoreCollection, fetchCollection, mplCore, ruleSet } from "@metaplex-foundation/mpl-core";
-import { createNoopSigner as createUmiNoopSigner, generateSigner, publicKey, signerIdentity } from "@metaplex-foundation/umi";
+import { create as createCoreCandyMachine, mintV1 as mintCoreCandyMachine, mplCandyMachine } from "@metaplex-foundation/mpl-core-candy-machine";
+import { createNoopSigner as createUmiNoopSigner, generateSigner, none, publicKey, signerIdentity, sol, some } from "@metaplex-foundation/umi";
 import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
 import { createPublicClient, encodeFunctionData, http, parseEther, type Hex } from "viem";
 import { sepolia } from "viem/chains";
@@ -142,6 +143,8 @@ type MarketCollection = {
   creatorAddress: string;
   contractAddress: string;
   assetAddress: string | null;
+  candyMachineAddress: string | null;
+  candyMachineTransactionHash: string | null;
   image: string;
   metadata: string;
   deployTransactionHash: string;
@@ -578,7 +581,7 @@ export default function OnchainLab() {
   }
 
   async function buyMarketCollection(collection: MarketCollection) {
-    if (collection.chain !== "ethereum") return notify("Solana secondary sales are the next marketplace connector");
+    if (collection.chain === "solana") return void mintPublicSolanaCollection(collection);
     if (!authenticated || !identityToken) return notify("Sign in before collecting an NFT");
     if (!ethereumWallet) return notify("Your Campus Ethereum wallet is unavailable");
     if (collection.minted >= collection.maxSupply) return notify("This edition is sold out");
@@ -609,6 +612,95 @@ export default function OnchainLab() {
       notify(`${collection.name} was minted to your Campus wallet`);
     } catch (error) {
       setMarketError(error instanceof Error ? error.message : "The NFT could not be purchased");
+    } finally {
+      setMarketBuyingId(null);
+    }
+  }
+
+  async function preparePublicSolanaMint(collection: MarketCollection) {
+    if (!solanaWallet || solanaWallet.address !== collection.creatorAddress) return notify("Only the collection creator can open its public mint");
+    const remaining = collection.maxSupply - collection.minted;
+    if (remaining < 1) return notify("This collection is already fully minted");
+    setMarketBuyingId(collection.id);
+    setMarketPurchaseHash(null);
+    setMarketError("");
+    try {
+      const { umi, studentSigner } = createStudentUmi();
+      const candyMachine = generateSigner(umi);
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${collection.id}:${collection.metadata}:${remaining}`));
+      const price = Number(collection.mintPrice || "0");
+      const builder = await createCoreCandyMachine(umi, {
+        candyMachine,
+        collection: publicKey(collection.contractAddress),
+        collectionUpdateAuthority: studentSigner,
+        authority: studentSigner.publicKey,
+        itemsAvailable: remaining,
+        isMutable: true,
+        configLineSettings: none(),
+        hiddenSettings: some({ name: collection.name, uri: collection.metadata, hash: new Uint8Array(digest) }),
+        guards: price > 0 ? { solPayment: some({ lamports: sol(price), destination: studentSigner.publicKey }) } : {},
+      });
+      let transaction = await builder.buildWithLatestBlockhash(umi);
+      transaction = await candyMachine.signTransaction(transaction);
+      const { signature } = await sendCampusSolanaTransaction(umi.transactions.serialize(transaction));
+      const hash = getBase58Decoder().decode(signature);
+      await waitForSolanaConfirmation(hash);
+      const requestToken = await campusIdentityToken();
+      if (!requestToken) throw new Error("Your Campus session expired. Refresh the page and try once more.");
+      const record = await fetch("/api/launch", {
+        method: "POST",
+        headers: { "content-type": "application/json", "privy-id-token": requestToken },
+        body: JSON.stringify({ action: "record_sale", launchId: collection.id, transactionHash: hash, candyMachineAddress: candyMachine.publicKey.toString() }),
+      });
+      const result = await record.json() as { error?: string };
+      if (!record.ok) throw new Error(result.error ?? "The public mint was created, but Campus could not save it");
+      setMarketPurchaseHash(hash);
+      await loadMarket();
+      notify(`${collection.name} is now open for student minting`);
+    } catch (error) {
+      setMarketError(error instanceof Error ? error.message : "The public Solana mint could not be prepared");
+    } finally {
+      setMarketBuyingId(null);
+    }
+  }
+
+  async function mintPublicSolanaCollection(collection: MarketCollection) {
+    if (!authenticated) return notify("Sign in before minting an NFT");
+    if (!solanaWallet) return notify("Your Campus Solana wallet is unavailable");
+    if (!collection.candyMachineAddress) return notify("The creator has not opened this public mint yet");
+    if (collection.minted >= collection.maxSupply) return notify("This collection is sold out");
+    setMarketBuyingId(collection.id);
+    setMarketPurchaseHash(null);
+    setMarketError("");
+    try {
+      const { umi } = createStudentUmi();
+      const asset = generateSigner(umi);
+      const price = Number(collection.mintPrice || "0");
+      const builder = mintCoreCandyMachine(umi, {
+        candyMachine: publicKey(collection.candyMachineAddress),
+        asset,
+        collection: publicKey(collection.contractAddress),
+        mintArgs: price > 0 ? { solPayment: some({ destination: publicKey(collection.creatorAddress) }) } : {},
+      });
+      let transaction = await builder.buildWithLatestBlockhash(umi);
+      transaction = await asset.signTransaction(transaction);
+      const { signature } = await sendCampusSolanaTransaction(umi.transactions.serialize(transaction));
+      const hash = getBase58Decoder().decode(signature);
+      await waitForSolanaConfirmation(hash);
+      const requestToken = await campusIdentityToken();
+      if (!requestToken) throw new Error("Your Campus session expired. Refresh the page and try once more.");
+      const record = await fetch("/api/market", {
+        method: "POST",
+        headers: { "content-type": "application/json", "privy-id-token": requestToken },
+        body: JSON.stringify({ collectionId: collection.id, transactionHash: hash, buyerAddress: solanaWallet.address, assetAddress: asset.publicKey.toString() }),
+      });
+      const result = await record.json() as { error?: string };
+      if (!record.ok) throw new Error(result.error ?? "The NFT minted, but Campus could not save the receipt");
+      setMarketPurchaseHash(hash);
+      await Promise.all([loadMarket(), loadWalletAssets()]);
+      notify(`${collection.name} was minted to your Solana Campus wallet`);
+    } catch (error) {
+      setMarketError(error instanceof Error ? error.message : "The Solana NFT could not be minted");
     } finally {
       setMarketBuyingId(null);
     }
@@ -1270,7 +1362,7 @@ export default function OnchainLab() {
 
   function createStudentUmi() {
     if (!solanaWallet) throw new Error("Your Campus Solana wallet is unavailable");
-    const umi = createUmi("https://api.devnet.solana.com").use(mplCore());
+    const umi = createUmi("https://api.devnet.solana.com").use(mplCore()).use(mplCandyMachine());
     const studentSigner = createUmiNoopSigner(publicKey(solanaWallet.address));
     umi.use(signerIdentity(studentSigner));
     return { umi, studentSigner };
@@ -1760,7 +1852,7 @@ export default function OnchainLab() {
                 <button className="market-refresh" disabled={marketLoading} onClick={() => void loadMarket()}>{marketLoading ? "Refreshing…" : "Refresh ↻"}</button>
               </div>
               {marketError && <div className="market-message error">{marketError}</div>}
-              {selectedMarket && <section className="market-detail card"><img src={selectedMarket.image} alt={selectedMarket.name} /><div className="market-detail-copy"><div><span className={`market-chain ${selectedMarket.chain}`}>{selectedMarket.chain === "ethereum" ? "ETHEREUM · SEPOLIA" : "SOLANA · DEVNET"}</span><button onClick={() => setSelectedMarketId(null)} aria-label="Close collection details">×</button></div><h2>{selectedMarket.name}</h2><p>{selectedMarket.description}</p><div className="market-creator"><span className="profile-dot">{selectedMarket.creator.displayName.slice(0, 2).toUpperCase()}</span><span><small>CREATED BY</small><b>@{selectedMarket.creator.username}</b></span></div><div className="market-detail-facts"><span><small>PRICE</small><b>{Number(selectedMarket.mintPrice) === 0 ? "FREE" : `${selectedMarket.mintPrice} ${selectedMarket.chain === "ethereum" ? "ETH" : "SOL"}`}</b></span><span><small>MINTED</small><b>{selectedMarket.minted} / {selectedMarket.maxSupply}</b></span><span><small>ROYALTY</small><b>{selectedMarket.royaltyPercent}%</b></span></div><div className="market-detail-actions">{selectedMarket.primarySaleReady ? <button disabled={marketBuyingId === selectedMarket.id || selectedMarket.minted >= selectedMarket.maxSupply} onClick={() => void buyMarketCollection(selectedMarket)}>{selectedMarket.minted >= selectedMarket.maxSupply ? "Sold out" : marketBuyingId === selectedMarket.id ? "Check your wallet…" : Number(selectedMarket.mintPrice) === 0 ? "Mint free edition →" : `Collect for ${selectedMarket.mintPrice} ETH →`}</button> : selectedMarket.chain === "solana" && solanaWallet?.address === selectedMarket.creatorAddress && selectedMarket.minted === 0 ? <button disabled={marketBuyingId === selectedMarket.id} onClick={() => void mintCreatorSolanaCollection(selectedMarket)}>{marketBuyingId === selectedMarket.id ? "Check your wallet…" : "Mint first Solana edition →"}</button> : <button onClick={() => notify("Public Solana minting needs a Candy Machine sale. The creator can mint edition one now; the public sale connector comes next.")}>Public Solana mint coming next</button>}<a href={selectedMarket.chain === "ethereum" ? `https://sepolia.etherscan.io/address/${selectedMarket.contractAddress}` : `https://core.metaplex.com/explorer/${selectedMarket.contractAddress}?env=devnet`} target="_blank" rel="noreferrer">View onchain ↗</a></div>{marketPurchaseHash && <a className="market-purchase-receipt" href={`https://sepolia.etherscan.io/tx/${marketPurchaseHash}`} target="_blank" rel="noreferrer">Purchase confirmed · view receipt ↗</a>}<small className="testnet-note">Testnet only · assets have no monetary value · your wallet approves every transaction.</small></div></section>}
+              {selectedMarket && <section className="market-detail card"><img src={selectedMarket.image} alt={selectedMarket.name} /><div className="market-detail-copy"><div><span className={`market-chain ${selectedMarket.chain}`}>{selectedMarket.chain === "ethereum" ? "ETHEREUM · SEPOLIA" : "SOLANA · DEVNET"}</span><button onClick={() => setSelectedMarketId(null)} aria-label="Close collection details">×</button></div><h2>{selectedMarket.name}</h2><p>{selectedMarket.description}</p><div className="market-creator"><span className="profile-dot">{selectedMarket.creator.displayName.slice(0, 2).toUpperCase()}</span><span><small>CREATED BY</small><b>@{selectedMarket.creator.username}</b></span></div><div className="market-detail-facts"><span><small>PRICE</small><b>{Number(selectedMarket.mintPrice) === 0 ? "FREE" : `${selectedMarket.mintPrice} ${selectedMarket.chain === "ethereum" ? "ETH" : "SOL"}`}</b></span><span><small>MINTED</small><b>{selectedMarket.minted} / {selectedMarket.maxSupply}</b></span><span><small>ROYALTY</small><b>{selectedMarket.royaltyPercent}%</b></span></div><div className="market-detail-actions">{selectedMarket.primarySaleReady ? <button disabled={marketBuyingId === selectedMarket.id || selectedMarket.minted >= selectedMarket.maxSupply} onClick={() => void buyMarketCollection(selectedMarket)}>{selectedMarket.minted >= selectedMarket.maxSupply ? "Sold out" : marketBuyingId === selectedMarket.id ? "Check your wallet…" : Number(selectedMarket.mintPrice) === 0 ? "Mint free edition →" : `Collect for ${selectedMarket.mintPrice} ${selectedMarket.chain === "ethereum" ? "ETH" : "SOL"} →`}</button> : selectedMarket.chain === "solana" && solanaWallet?.address === selectedMarket.creatorAddress ? <button disabled={marketBuyingId === selectedMarket.id || selectedMarket.minted >= selectedMarket.maxSupply} onClick={() => void preparePublicSolanaMint(selectedMarket)}>{marketBuyingId === selectedMarket.id ? "Check your wallet…" : "Open public Solana mint →"}</button> : <button onClick={() => notify("The creator still needs to open this collection’s public Solana mint.")}>Waiting for creator</button>}<a href={selectedMarket.chain === "ethereum" ? `https://sepolia.etherscan.io/address/${selectedMarket.contractAddress}` : `https://core.metaplex.com/explorer/${selectedMarket.contractAddress}?env=devnet`} target="_blank" rel="noreferrer">View onchain ↗</a></div>{marketPurchaseHash && <a className="market-purchase-receipt" href={selectedMarket.chain === "ethereum" ? `https://sepolia.etherscan.io/tx/${marketPurchaseHash}` : `https://explorer.solana.com/tx/${marketPurchaseHash}?cluster=devnet`} target="_blank" rel="noreferrer">Transaction confirmed · view receipt ↗</a>}<small className="testnet-note">Testnet only · assets have no monetary value · your wallet approves every transaction.</small></div></section>}
               {marketLoading && marketCollections.length === 0 ? <div className="market-message">Loading student collections…</div> : visibleMarketCollections.length ? <div className="market-grid live-market-grid">{visibleMarketCollections.map((collection) => <article className="market-card" key={collection.id}><button className="market-card-open" onClick={() => { setSelectedMarketId(collection.id); setMarketPurchaseHash(null); window.scrollTo({ top: 0, behavior: "smooth" }); }} aria-label={`View ${collection.name}`}><div className="market-image"><img src={collection.image} alt={collection.name} /><span>{collection.chain === "ethereum" ? "SEP" : "SOL"} · {collection.standard}</span></div><div className="market-meta"><div><h3>{collection.name}</h3><p>by @{collection.creator.username}</p></div><span><small>{collection.minted} / {collection.maxSupply} MINTED</small><b>{Number(collection.mintPrice) === 0 ? "FREE" : `${collection.mintPrice} ${collection.chain === "ethereum" ? "ETH" : "SOL"}`}</b></span></div><div className="market-card-action">View collection →</div></button></article>)}</div> : <div className="market-message"><b>No collections match this view.</b><span>Try another network or search.</span></div>}
               <section className="market-secondary card"><div><span className="eyebrow">NEXT MARKET LAYER</span><h3>List, buy and resell safely.</h3><p>Secondary sales need an atomic marketplace contract so payment and ownership move together. We’ll add this after the public discovery and primary mint flow is proven.</p></div><button onClick={() => setActive("wallet")}>View my assets →</button></section>
               </>}

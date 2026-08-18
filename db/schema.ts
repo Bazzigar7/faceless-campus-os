@@ -279,6 +279,7 @@ export const rwaAssets = sqliteTable("rwa_assets", {
   risk: text("risk").notNull(),
   totalUnits: integer("total_units").notNull(),
   priceCredits: integer("price_credits").notNull(),
+  annualYieldBps: integer("annual_yield_bps").notNull().default(0),
   status: text("status", { enum: ["active", "paused", "archived"] }).notNull().default("active"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -286,6 +287,19 @@ export const rwaAssets = sqliteTable("rwa_assets", {
   uniqueIndex("idx_rwa_assets_symbol").on(table.symbol),
   index("idx_rwa_assets_status_time").on(table.status, table.createdAt),
   index("idx_rwa_assets_creator_time").on(table.creatorUserId, table.createdAt),
+]);
+
+export const rwaDistributions = sqliteTable("rwa_distributions", {
+  id: text("id").primaryKey(),
+  assetId: text("asset_id").notNull().references(() => rwaAssets.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  period: text("period").notNull(),
+  unitsSnapshot: integer("units_snapshot").notNull(),
+  amountCredits: integer("amount_credits").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_rwa_distributions_asset_user_period").on(table.assetId, table.userId, table.period),
+  index("idx_rwa_distributions_user_time").on(table.userId, table.createdAt),
 ]);
 
 export const rwaTrades = sqliteTable("rwa_trades", {

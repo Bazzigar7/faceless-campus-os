@@ -297,7 +297,7 @@ function identityTokenExpiresSoon(token: string, leewaySeconds = 30) {
   }
 }
 
-const solanaDevnetRpc = createSolanaRpc("https://api.devnet.solana.com");
+const solanaDevnetRpc = createSolanaRpc("/api/solana-rpc");
 const sepoliaPublicClient = createPublicClient({ chain: sepolia, transport: http() });
 const campusEditionMintAbi = [{
   type: "function",
@@ -1345,7 +1345,7 @@ export default function OnchainLab() {
 
   async function waitForSolanaConfirmation(transactionSignature: string) {
     for (let attempt = 0; attempt < 30; attempt += 1) {
-      const response = await fetch("https://api.devnet.solana.com", {
+      const response = await fetch("/api/solana-rpc", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getSignatureStatuses", params: [[transactionSignature], { searchTransactionHistory: true }] }),
@@ -1362,7 +1362,7 @@ export default function OnchainLab() {
 
   function createStudentUmi() {
     if (!solanaWallet) throw new Error("Your Campus Solana wallet is unavailable");
-    const umi = createUmi("https://api.devnet.solana.com").use(mplCore()).use(mplCandyMachine());
+    const umi = createUmi(`${window.location.origin}/api/solana-rpc`).use(mplCore()).use(mplCandyMachine());
     const studentSigner = createUmiNoopSigner(publicKey(solanaWallet.address));
     umi.use(signerIdentity(studentSigner));
     return { umi, studentSigner };

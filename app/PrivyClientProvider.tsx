@@ -10,7 +10,7 @@ const browserGlobals = globalThis as typeof globalThis & { Buffer?: typeof Buffe
 browserGlobals.Buffer ??= Buffer;
 
 const solanaConnectors = toSolanaWalletConnectors({ shouldAutoConnect: true });
-const solanaDevnetRpc = createSolanaRpc("https://api.devnet.solana.com");
+const solanaDevnetRpc = createSolanaRpc("/api/solana-rpc");
 const solanaDevnetSubscriptions = createSolanaRpcSubscriptions("wss://api.devnet.solana.com");
 
 export default function PrivyClientProvider({ appId, children }: { appId: string; children: React.ReactNode }) {

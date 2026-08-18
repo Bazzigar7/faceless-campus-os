@@ -57,6 +57,13 @@
       "when": 1787080772687,
       "tag": "0007_slow_echo",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1787085961621,
+      "tag": "0008_sad_the_fury",
+      "breakpoints": true
     }
   ]
 }

@@ -354,6 +354,7 @@ export default function OnchainLab() {
   const [selectedMarketId, setSelectedMarketId] = useState<string | null>(null);
   const [marketBuyingId, setMarketBuyingId] = useState<string | null>(null);
   const [marketPurchaseHash, setMarketPurchaseHash] = useState<string | null>(null);
+  const [transactionQueue, setTransactionQueue] = useState<{ position: number; seconds: number } | null>(null);
   const [marketArea, setMarketArea] = useState<"nfts" | "tokens" | "rwas">("nfts");
   const [rwaState, setRwaState] = useState<RwaState | null>(null);
   const [rwaBusy, setRwaBusy] = useState<string | null>(null);
@@ -625,6 +626,7 @@ export default function OnchainLab() {
     setMarketPurchaseHash(null);
     setMarketError("");
     try {
+      await waitForCampusSolanaTurn();
       const { umi, studentSigner } = createStudentUmi();
       const candyMachine = generateSigner(umi);
       const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${collection.id}:${collection.metadata}:${remaining}`));
@@ -673,6 +675,7 @@ export default function OnchainLab() {
     setMarketPurchaseHash(null);
     setMarketError("");
     try {
+      await waitForCampusSolanaTurn();
       const { umi } = createStudentUmi();
       const asset = generateSigner(umi);
       const price = Number(collection.mintPrice || "0");
@@ -712,6 +715,7 @@ export default function OnchainLab() {
     setMarketPurchaseHash(null);
     setMarketError("");
     try {
+      await waitForCampusSolanaTurn();
       const { umi, studentSigner } = createStudentUmi();
       const coreCollection = await fetchCollection(umi, publicKey(collection.contractAddress));
       const assetSigner = generateSigner(umi);
@@ -1040,6 +1044,7 @@ export default function OnchainLab() {
         if (!solanaWallet) throw new Error("Solana wallet is unavailable");
         const lamports = decimalToUnits(transferAmount, 9);
         if (lamports <= 0n || lamports > 1_000_000_000n) throw new Error("Send between 0 and 1 test SOL");
+        await waitForCampusSolanaTurn();
         const { value: latestBlockhash } = await solanaDevnetRpc.getLatestBlockhash().send();
         const instruction = getTransferSolInstruction({
           amount: lamports,
@@ -1181,6 +1186,33 @@ export default function OnchainLab() {
         throw retryError;
       }
     }
+  }
+
+  async function waitForCampusSolanaTurn() {
+    let requestToken = await campusIdentityToken();
+    if (!requestToken) throw new Error("Your Campus session expired. Refresh the page or sign in again—your wallets and work are safe.");
+    const joinQueue = (token: string) => fetch("/api/transaction-queue", {
+      method: "POST",
+      headers: { "content-type": "application/json", "privy-id-token": token },
+      body: JSON.stringify({ network: "solana_devnet" }),
+    });
+    let response = await joinQueue(requestToken);
+    if (response.status === 401) {
+      requestToken = await campusIdentityToken(true);
+      if (!requestToken) throw new Error("Your Campus session expired. Refresh the page or sign in again—your wallets and work are safe.");
+      response = await joinQueue(requestToken);
+    }
+    const result = await response.json() as { readyAt?: number; position?: number; error?: string };
+    if (!response.ok || !result.readyAt) throw new Error(result.error ?? "The Campus transaction queue is unavailable");
+    const position = Math.max(1, result.position ?? 1);
+    let seconds = Math.max(0, Math.ceil((result.readyAt - Date.now()) / 1_000));
+    setTransactionQueue({ position, seconds });
+    while (seconds > 0) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+      seconds = Math.max(0, Math.ceil((result.readyAt - Date.now()) / 1_000));
+      setTransactionQueue({ position, seconds });
+    }
+    setTransactionQueue(null);
   }
 
   async function askMask(event: React.FormEvent<HTMLFormElement>) {
@@ -1397,6 +1429,7 @@ export default function OnchainLab() {
       const prepared = await response.json() as { launchId?: string; metadataUrl?: string; error?: string };
       if (!response.ok || !prepared.launchId || !prepared.metadataUrl) throw new Error(prepared.error ?? "The Solana collection could not be prepared");
 
+      await waitForCampusSolanaTurn();
       const { umi, studentSigner } = createStudentUmi();
       const collectionSigner = generateSigner(umi);
       const plugins: Parameters<typeof createCoreCollection>[1]["plugins"] = [{
@@ -1473,6 +1506,7 @@ export default function OnchainLab() {
     setLaunchTransactionError("");
     setLaunchTransactionStatus("minting");
     try {
+      await waitForCampusSolanaTurn();
       const { umi, studentSigner } = createStudentUmi();
       const collection = await fetchCollection(umi, publicKey(launchDeployment.contractAddress));
       const assetSigner = generateSigner(umi);
@@ -1950,6 +1984,7 @@ export default function OnchainLab() {
         </div>
       )}
 
+      {transactionQueue && <div className="transaction-queue" role="status" aria-live="polite"><span>{transactionQueue.seconds > 0 ? transactionQueue.seconds : "✓"}</span><div><b>{transactionQueue.seconds > 0 ? "Campus queue" : "Your turn"}</b><small>{transactionQueue.seconds > 0 ? `Position ${transactionQueue.position} · wallet opens in about ${transactionQueue.seconds}s` : "Opening your wallet for approval…"}</small></div></div>}
       {toast && <div className="toast"><span>✓</span>{toast}</div>}
     </main>
   );

@@ -171,6 +171,12 @@ export const marketPurchases = sqliteTable("market_purchases", {
   index("idx_market_purchases_buyer_time").on(table.buyerUserId, table.createdAt),
 ]);
 
+export const campusTransactionQueues = sqliteTable("campus_transaction_queues", {
+  network: text("network").primaryKey(),
+  nextAvailableAt: integer("next_available_at").notNull(),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
 export const rwaHoldings = sqliteTable("rwa_holdings", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

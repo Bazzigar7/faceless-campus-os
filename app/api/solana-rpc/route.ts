@@ -47,26 +47,31 @@ export async function POST(request: Request) {
     return errorResponse(null, -32600, "Transaction requests must come from Campus OS", 403);
   }
 
+  const includesTransaction = requests.some((item) => item.method === "sendTransaction");
   const privateEndpoint = process.env.SOLANA_DEVNET_RPC_URL?.trim();
   const endpoints = [...new Set([privateEndpoint, "https://api.devnet.solana.com"].filter(Boolean) as string[])];
-  for (const endpoint of endpoints) {
-    try {
-      const upstream = await fetch(endpoint, {
-        method: "POST",
-        headers: { "content-type": "application/json", "user-agent": "Faceless-Campus-OS/1.0" },
-        body: JSON.stringify(body),
-      });
-      const text = await upstream.text();
-      if (upstream.ok) {
-        const payload = JSON.parse(text) as { error?: { code?: number } } | Array<{ error?: { code?: number } }>;
-        const errors = Array.isArray(payload) ? payload.map((item) => item.error?.code) : [payload.error?.code];
-        if (!errors.some((code) => code === 429 || code === -32005 || code === -32429)) {
-          return new Response(text, { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+  const attempts = includesTransaction ? 3 : 1;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    for (const endpoint of endpoints) {
+      try {
+        const upstream = await fetch(endpoint, {
+          method: "POST",
+          headers: { "content-type": "application/json", "user-agent": "Faceless-Campus-OS/1.0" },
+          body: JSON.stringify(body),
+        });
+        const text = await upstream.text();
+        if (upstream.ok) {
+          const payload = JSON.parse(text) as { error?: { code?: number } } | Array<{ error?: { code?: number } }>;
+          const errors = Array.isArray(payload) ? payload.map((item) => item.error?.code) : [payload.error?.code];
+          if (!errors.some((code) => code === 429 || code === -32005 || code === -32429)) {
+            return new Response(text, { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+          }
         }
+      } catch {
+        // Try the next endpoint, then retry transaction submissions after a short pause.
       }
-    } catch {
-      // Try the public Devnet endpoint only when the private provider is unavailable.
     }
+    if (attempt < attempts - 1) await new Promise((resolve) => setTimeout(resolve, 3_000));
   }
   return errorResponse(requests[0]?.id, -32005, "Solana Devnet is busy. Wait a few seconds and try again.", 503);
 }

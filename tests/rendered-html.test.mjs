@@ -88,3 +88,18 @@ test("token airdrops use a secure vault and one verified claim per student", asy
   assert.match(signer, /privy-idempotency-key/);
   assert.match(schema, /idx_token_airdrop_claims_airdrop_user/);
 });
+
+test("RWA lab persists student case studies and keeps them fictional", async () => {
+  const [client, route, schema] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/rwa/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /createRwaCaseStudy/);
+  assert.match(client, /Open tokenisation studio/);
+  assert.match(client, /no legal ownership/i);
+  assert.match(route, /action === "create"/);
+  assert.match(route, /Not enough practice units remain/);
+  assert.match(schema, /rwa_assets/);
+  assert.match(schema, /idx_rwa_assets_symbol/);
+});

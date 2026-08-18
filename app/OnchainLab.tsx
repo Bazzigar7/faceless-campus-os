@@ -192,7 +192,8 @@ type MarketCollection = {
 };
 type RwaHolding = { id: string; assetId: string; units: number; totalCostCredits: number };
 type RwaTrade = { id: string; assetId: string; side: "buy" | "sell"; units: number; priceCredits: number; totalCredits: number; createdAt: string };
-type RwaState = { balanceCredits: number; holdings: RwaHolding[]; trades: RwaTrade[] };
+type RwaAsset = { id: string; name: string; symbol: string; category: string; description: string; rights: string; incomeModel: string; risk: string; totalUnits: number; priceCredits: number; unitsHeld: number; holders: number; creator: { username: string; displayName: string } | null };
+type RwaState = { balanceCredits: number; holdings: RwaHolding[]; trades: RwaTrade[]; assets: RwaAsset[] };
 
 type Drop = {
   id: number;
@@ -297,11 +298,11 @@ const marketItems = [
   { id: 3, title: "Stable State", creator: "Team Orbit", price: "0.012", image: "/faceless-usdt.png", tag: "2 of 5" },
 ];
 
-const rwaAssets = [
-  { id: "campus_tower", symbol: "TOWER", name: "Campus Tower A", type: "IMAGINARY BUILDING", units: 1_000, price: 125, income: "Simulated rent", yield: "6.8% model", color: "violet", copy: "Split a fictional student residence into digital units and explore ownership records, rent distribution and liquidity." },
-  { id: "solar_roof", symbol: "SOLAR", name: "Solar Roof Co-op", type: "IMAGINARY ENERGY ASSET", units: 2_500, price: 64, income: "Energy credits", yield: "4.2% model", color: "green", copy: "Model how a campus solar installation could represent participation rights and simulated energy revenue." },
-  { id: "creator_studio", symbol: "STUDIO", name: "Creator Studio Equipment", type: "IMAGINARY BUSINESS ASSET", units: 500, price: 38, income: "Booking revenue", yield: "8.1% model", color: "amber", copy: "Explore fractional access to cameras and production gear through a fictional revenue-sharing structure." },
-] as const;
+const rwaAssetFallbacks: RwaAsset[] = [
+  { id: "campus_tower", symbol: "TOWER", name: "Campus Tower A", category: "Imaginary building", totalUnits: 1_000, priceCredits: 125, incomeModel: "Simulated rent · 6.8% model", rights: "A simulated share of the modelled rental pool; not a deed, security or legal claim.", risk: "Occupancy, maintenance and legal-enforcement risk", description: "Split a fictional student residence into digital units and explore ownership records, rent distribution and liquidity.", unitsHeld: 0, holders: 0, creator: null },
+  { id: "solar_roof", symbol: "SOLAR", name: "Solar Roof Co-op", category: "Imaginary energy asset", totalUnits: 2_500, priceCredits: 64, incomeModel: "Energy credits · 4.2% model", rights: "A simulated share of modelled energy credits; no ownership of physical panels.", risk: "Weather, equipment, pricing and counterparty risk", description: "Model how a campus solar installation could represent participation rights and simulated energy revenue.", unitsHeld: 0, holders: 0, creator: null },
+  { id: "creator_studio", symbol: "STUDIO", name: "Creator Studio Equipment", category: "Imaginary business asset", totalUnits: 500, priceCredits: 38, incomeModel: "Booking revenue · 8.1% model", rights: "A simulated share of modelled booking revenue; no claim over the equipment.", risk: "Utilisation, damage, depreciation and operator risk", description: "Explore fractional access to cameras and production gear through a fictional revenue-sharing structure.", unitsHeld: 0, holders: 0, creator: null },
+];
 
 function MaskOrb({ compact = false }: { compact?: boolean }) {
   return (
@@ -416,6 +417,8 @@ export default function OnchainLab() {
   const [rwaState, setRwaState] = useState<RwaState | null>(null);
   const [rwaBusy, setRwaBusy] = useState<string | null>(null);
   const [rwaError, setRwaError] = useState("");
+  const [rwaStudioOpen, setRwaStudioOpen] = useState(false);
+  const [rwaDraft, setRwaDraft] = useState({ name: "", symbol: "", category: "Imaginary property", description: "", rights: "", incomeModel: "", risk: "", totalUnits: "1000", priceCredits: "100" });
   const [usdPrices, setUsdPrices] = useState<UsdPrices | null>(null);
   const [claimedCampaigns, setClaimedCampaigns] = useState<number[]>([]);
   const [username, setUsername] = useState("aanya");
@@ -466,6 +469,7 @@ export default function OnchainLab() {
   });
   const selectedMarket = marketCollections.find((collection) => collection.id === selectedMarketId) ?? null;
   const selectedToken = campusTokens.find((token) => token.id === selectedTokenId) ?? null;
+  const liveRwaAssets = rwaState?.assets ?? rwaAssetFallbacks;
   const selectedAirdrop = tokenAirdrops.find((airdrop) => airdrop.tokenId === selectedTokenId && (airdrop.status === "draft" || airdrop.status === "open"))
     ?? tokenAirdrops.find((airdrop) => airdrop.tokenId === selectedTokenId) ?? null;
 
@@ -861,7 +865,7 @@ export default function OnchainLab() {
       const response = await fetch("/api/rwa", {
         method: "POST",
         headers: { "content-type": "application/json", "privy-id-token": requestToken },
-        body: JSON.stringify({ assetId, side, units: 1 }),
+        body: JSON.stringify({ action: "trade", assetId, side, units: 1 }),
       });
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error ?? "The practice trade could not be completed");
@@ -869,6 +873,31 @@ export default function OnchainLab() {
       notify(`${side === "buy" ? "Bought" : "Sold"} 1 practice unit`);
     } catch (error) {
       setRwaError(error instanceof Error ? error.message : "The practice trade could not be completed");
+    } finally {
+      setRwaBusy(null);
+    }
+  }
+
+  async function createRwaCaseStudy(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const requestToken = await campusIdentityToken();
+    if (!requestToken) return notify("Sign in to publish an RWA case study");
+    setRwaBusy("create");
+    setRwaError("");
+    try {
+      const response = await fetch("/api/rwa", {
+        method: "POST",
+        headers: { "content-type": "application/json", "privy-id-token": requestToken },
+        body: JSON.stringify({ action: "create", ...rwaDraft, totalUnits: Number(rwaDraft.totalUnits), priceCredits: Number(rwaDraft.priceCredits) }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "The RWA case study could not be published");
+      setRwaDraft({ name: "", symbol: "", category: "Imaginary property", description: "", rights: "", incomeModel: "", risk: "", totalUnits: "1000", priceCredits: "100" });
+      setRwaStudioOpen(false);
+      setRwaState(null);
+      notify("Your fictional RWA is live in the Campus practice market");
+    } catch (error) {
+      setRwaError(error instanceof Error ? error.message : "The RWA case study could not be published");
     } finally {
       setRwaBusy(null);
     }
@@ -2296,17 +2325,18 @@ export default function OnchainLab() {
                 </section>
                 {rwaError && <div className="market-message error">{rwaError}</div>}
                 <div className="rwa-grid">
-                  {rwaAssets.map((asset) => {
+                  {liveRwaAssets.map((asset, index) => {
                     const holding = rwaState?.holdings.find((item) => item.assetId === asset.id);
                     const owned = holding?.units ?? 0;
-                    return <article className="rwa-card card" key={asset.id}><div className={`rwa-art ${asset.color}`}><span>{asset.symbol}</span><b>{asset.id === "campus_tower" ? "BUILDING" : asset.id === "solar_roof" ? "ENERGY" : "EQUIPMENT"}</b></div><div className="rwa-card-copy"><div className="rwa-card-head"><span><small>{asset.type}</small><h3>{asset.name}</h3></span><em>FICTIONAL</em></div><p>{asset.copy}</p><div className="rwa-facts"><span><small>UNIT PRICE</small><b>{asset.price} credits</b></span><span><small>YOUR UNITS</small><b>{owned}</b></span><span><small>INCOME MODEL</small><b>{asset.yield}</b></span></div><div className="rwa-rights"><small>WHAT THE PRACTICE TOKEN REPRESENTS</small><p>{asset.income}; it is not a deed, security or legal claim.</p></div><div className="rwa-trade-actions"><button disabled={Boolean(rwaBusy)} onClick={() => void tradeRwa(asset.id, "buy")}>{rwaBusy === `${asset.id}:buy` ? "Buying…" : "Buy 1 unit"}</button><button disabled={Boolean(rwaBusy) || owned < 1} onClick={() => void tradeRwa(asset.id, "sell")}>{rwaBusy === `${asset.id}:sell` ? "Selling…" : "Sell 1 unit"}</button></div></div></article>;
+                    return <article className="rwa-card card" key={asset.id}><div className={`rwa-art ${index % 3 === 1 ? "green" : index % 3 === 2 ? "amber" : "violet"}`}><span>{asset.symbol}</span><b>{asset.category.toUpperCase()}</b><small>{asset.unitsHeld}/{asset.totalUnits} units held · {asset.holders} holders</small></div><div className="rwa-card-copy"><div className="rwa-card-head"><span><small>{asset.creator ? `BY @${asset.creator.username}` : "CAMPUS CASE STUDY"}</small><h3>{asset.name}</h3></span><em>FICTIONAL</em></div><p>{asset.description}</p><div className="rwa-facts"><span><small>UNIT PRICE</small><b>{asset.priceCredits} credits</b></span><span><small>YOUR UNITS</small><b>{owned}</b></span><span><small>INCOME MODEL</small><b>{asset.incomeModel}</b></span></div><div className="rwa-rights"><small>WHAT THE PRACTICE TOKEN REPRESENTS</small><p>{asset.rights}</p></div><div className="rwa-risk"><small>RISK TO QUESTION</small><p>{asset.risk}</p></div><div className="rwa-trade-actions"><button disabled={Boolean(rwaBusy) || asset.unitsHeld >= asset.totalUnits} onClick={() => void tradeRwa(asset.id, "buy")}>{rwaBusy === `${asset.id}:buy` ? "Buying…" : "Buy 1 unit"}</button><button disabled={Boolean(rwaBusy) || owned < 1} onClick={() => void tradeRwa(asset.id, "sell")}>{rwaBusy === `${asset.id}:sell` ? "Selling…" : "Sell 1 unit"}</button></div></div></article>;
                   })}
                 </div>
                 <div className="rwa-lower-grid">
-                  <section className="rwa-portfolio card"><span className="eyebrow">YOUR PRACTICE PORTFOLIO</span><h3>{rwaState?.holdings.reduce((total, holding) => total + holding.units, 0) ?? 0} tokenised units</h3>{rwaState?.holdings.length ? rwaState.holdings.map((holding) => { const asset = rwaAssets.find((item) => item.id === holding.assetId); return <div key={holding.assetId}><span>{asset?.name ?? holding.assetId}</span><b>{holding.units} × {asset?.price ?? 0} credits</b></div>; }) : <p>Buy a practice unit to see how fractional assets appear in a portfolio.</p>}</section>
-                  <section className="rwa-activity card"><span className="eyebrow">RECENT PRACTICE TRADES</span>{rwaState?.trades.length ? rwaState.trades.slice(0, 5).map((trade) => <div key={trade.id}><span><b>{trade.side.toUpperCase()}</b>{rwaAssets.find((item) => item.id === trade.assetId)?.symbol ?? trade.assetId}</span><strong>{trade.totalCredits} credits</strong></div>) : <p>No trades yet. Every buy and sell will appear here.</p>}</section>
+                  <section className="rwa-portfolio card"><span className="eyebrow">YOUR PRACTICE PORTFOLIO</span><h3>{rwaState?.holdings.reduce((total, holding) => total + holding.units, 0) ?? 0} tokenised units</h3>{rwaState?.holdings.filter((holding) => holding.units > 0).length ? rwaState.holdings.filter((holding) => holding.units > 0).map((holding) => { const asset = liveRwaAssets.find((item) => item.id === holding.assetId); return <div key={holding.assetId}><span>{asset?.name ?? holding.assetId}</span><b>{holding.units} × {asset?.priceCredits ?? 0} credits</b></div>; }) : <p>Buy a practice unit to see how fractional assets appear in a portfolio.</p>}</section>
+                  <section className="rwa-activity card"><span className="eyebrow">RECENT PRACTICE TRADES</span>{rwaState?.trades.length ? rwaState.trades.slice(0, 5).map((trade) => <div key={trade.id}><span><b>{trade.side.toUpperCase()}</b>{liveRwaAssets.find((item) => item.id === trade.assetId)?.symbol ?? trade.assetId}</span><strong>{trade.totalCredits} credits</strong></div>) : <p>No trades yet. Every buy and sell will appear here.</p>}</section>
                 </div>
-                <section className="rwa-create card"><div><span className="eyebrow">BUILD THE NEXT CASE STUDY</span><h3>Tokenise an imaginary cinema, farm or creator studio.</h3><p>Mask can help define the asset, token rights, supply, income story and the risks students should understand before anything is deployed.</p></div><button onClick={() => setActive("mask")}>Design an RWA with Mask →</button></section>
+                <section className="rwa-create card"><div><span className="eyebrow">BUILD THE NEXT CASE STUDY</span><h3>Tokenise an imaginary cinema, farm or creator studio.</h3><p>Define the asset, token rights, supply, income story and risks. It becomes a shared Campus simulation—not a legal investment or real-world claim.</p></div><button onClick={() => { setRwaStudioOpen((open) => !open); setRwaError(""); }}>{rwaStudioOpen ? "Close studio ×" : "Open tokenisation studio →"}</button></section>
+                {rwaStudioOpen && <form className="rwa-studio card" onSubmit={createRwaCaseStudy}><div className="rwa-studio-head"><span><small>STUDENT RWA LAB</small><h3>Build the asset before you build the token.</h3><p>A useful RWA model clearly separates the real thing, the digital units, the rights those units promise and the risks that still exist offchain.</p></span><b>SIMULATION</b></div><div className="rwa-studio-grid"><label>Asset name<input required value={rwaDraft.name} onChange={(event) => setRwaDraft((draft) => ({ ...draft, name: event.target.value }))} placeholder="Campus Cinema A" /></label><label>Symbol<input required maxLength={8} value={rwaDraft.symbol} onChange={(event) => setRwaDraft((draft) => ({ ...draft, symbol: event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") }))} placeholder="CINEMA" /></label><label>Asset type<select value={rwaDraft.category} onChange={(event) => setRwaDraft((draft) => ({ ...draft, category: event.target.value }))}><option>Imaginary property</option><option>Imaginary energy asset</option><option>Imaginary business asset</option><option>Imaginary collectible</option><option>Imaginary revenue stream</option></select></label><label>Total units<input required inputMode="numeric" value={rwaDraft.totalUnits} onChange={(event) => setRwaDraft((draft) => ({ ...draft, totalUnits: event.target.value.replace(/\D/g, "") }))} /></label><label>Price per unit · credits<input required inputMode="numeric" value={rwaDraft.priceCredits} onChange={(event) => setRwaDraft((draft) => ({ ...draft, priceCredits: event.target.value.replace(/\D/g, "") }))} /></label><label className="wide">Asset story<textarea required value={rwaDraft.description} onChange={(event) => setRwaDraft((draft) => ({ ...draft, description: event.target.value }))} placeholder="What is being tokenised, and why split it into smaller units?" /></label><label className="wide">What does one token represent?<textarea required value={rwaDraft.rights} onChange={(event) => setRwaDraft((draft) => ({ ...draft, rights: event.target.value }))} placeholder="Example: a simulated share of modelled booking revenue—not ownership of the building." /></label><label>Income model<input required value={rwaDraft.incomeModel} onChange={(event) => setRwaDraft((draft) => ({ ...draft, incomeModel: event.target.value }))} placeholder="Ticket revenue · 5% model" /></label><label>Key risk<input required value={rwaDraft.risk} onChange={(event) => setRwaDraft((draft) => ({ ...draft, risk: event.target.value }))} placeholder="Demand, maintenance, operator and legal risk" /></label></div><div className="rwa-studio-review"><span><b>Before publishing</b><small>Fictional only · practice credits · no legal ownership · classmates can trade it</small></span><button disabled={rwaBusy === "create"}>{rwaBusy === "create" ? "Publishing…" : "Publish to RWA market →"}</button></div></form>}
               </div>}
             </div>
           )}

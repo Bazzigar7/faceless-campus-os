@@ -267,6 +267,27 @@ export const rwaHoldings = sqliteTable("rwa_holdings", {
   index("idx_rwa_holdings_user").on(table.userId),
 ]);
 
+export const rwaAssets = sqliteTable("rwa_assets", {
+  id: text("id").primaryKey(),
+  creatorUserId: text("creator_user_id").references(() => users.id, { onDelete: "set null" }),
+  name: text("name").notNull(),
+  symbol: text("symbol").notNull(),
+  category: text("category").notNull(),
+  description: text("description").notNull(),
+  rights: text("rights").notNull(),
+  incomeModel: text("income_model").notNull(),
+  risk: text("risk").notNull(),
+  totalUnits: integer("total_units").notNull(),
+  priceCredits: integer("price_credits").notNull(),
+  status: text("status", { enum: ["active", "paused", "archived"] }).notNull().default("active"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_rwa_assets_symbol").on(table.symbol),
+  index("idx_rwa_assets_status_time").on(table.status, table.createdAt),
+  index("idx_rwa_assets_creator_time").on(table.creatorUserId, table.createdAt),
+]);
+
 export const rwaTrades = sqliteTable("rwa_trades", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

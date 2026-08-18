@@ -104,6 +104,10 @@ test("RWA lab persists student case studies and keeps them fictional", async () 
   assert.match(client, /ESTIMATED MONTHLY RETURN/);
   assert.match(client, /CREDITS ARE NOT REDEEMABLE/);
   assert.match(client, /HOW THE REAL MAINNET VERSION WOULD WORK/);
+  assert.match(client, /MONTHLY CASH-FLOW WATERFALL/);
+  assert.match(client, /Gross monthly income/);
+  assert.match(route, /cashflowFor/);
+  assert.match(route, /netDistributableCredits/);
   assert.match(schema, /rwa_assets/);
   assert.match(schema, /idx_rwa_assets_symbol/);
   assert.match(schema, /idx_rwa_distributions_asset_user_period/);

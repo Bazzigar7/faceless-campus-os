@@ -92,6 +92,13 @@
       "when": 1787092508029,
       "tag": "0012_bright_mac_gargan",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1787093633342,
+      "tag": "0013_sparkling_boomerang",
+      "breakpoints": true
     }
   ]
 }

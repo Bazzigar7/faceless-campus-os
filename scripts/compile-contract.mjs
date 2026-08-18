@@ -3,12 +3,11 @@ import path from "node:path";
 import solc from "solc";
 
 const root = process.cwd();
-const sourcePath = path.join(root, "contracts", "CampusEdition.sol");
-const outputPath = path.join(root, "contracts", "artifacts", "CampusEdition.json");
+const contracts = ["CampusEdition", "CampusToken"];
 
 const input = {
   language: "Solidity",
-  sources: { "contracts/CampusEdition.sol": { content: fs.readFileSync(sourcePath, "utf8") } },
+  sources: Object.fromEntries(contracts.map((name) => [`contracts/${name}.sol`, { content: fs.readFileSync(path.join(root, "contracts", `${name}.sol`), "utf8") }])),
   settings: {
     optimizer: { enabled: true, runs: 200 },
     evmVersion: "cancun",
@@ -26,7 +25,10 @@ const output = JSON.parse(solc.compile(JSON.stringify(input), { import: findImpo
 const errors = (output.errors || []).filter((item) => item.severity === "error");
 if (errors.length) throw new Error(errors.map((item) => item.formattedMessage).join("\n"));
 
-const contract = output.contracts["contracts/CampusEdition.sol"].CampusEdition;
-fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-fs.writeFileSync(outputPath, `${JSON.stringify({ abi: contract.abi, bytecode: `0x${contract.evm.bytecode.object}`, deployedBytecode: `0x${contract.evm.deployedBytecode.object}` }, null, 2)}\n`);
-console.log(outputPath);
+for (const name of contracts) {
+  const contract = output.contracts[`contracts/${name}.sol`][name];
+  const outputPath = path.join(root, "contracts", "artifacts", `${name}.json`);
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, `${JSON.stringify({ abi: contract.abi, bytecode: `0x${contract.evm.bytecode.object}`, deployedBytecode: `0x${contract.evm.deployedBytecode.object}` }, null, 2)}\n`);
+  console.log(outputPath);
+}

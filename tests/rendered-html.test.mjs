@@ -56,3 +56,19 @@ test("Privy transaction approvals have the browser Buffer compatibility layer", 
   assert.match(provider, /import \{ Buffer \} from "buffer"/);
   assert.match(provider, /browserGlobals\.Buffer \?\?= Buffer/);
 });
+
+test("token launch and peer exchange stay wallet-approved on both testnets", async () => {
+  const [client, tokenRoute, tokenContract] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/tokens/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../contracts/CampusToken.sol", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /deploySepoliaToken/);
+  assert.match(client, /deploySolanaToken/);
+  assert.match(client, /waitForCampusSolanaTurn/);
+  assert.match(client, /sendCampusToken/);
+  assert.match(tokenRoute, /record_deploy/);
+  assert.match(tokenRoute, /record_transfer/);
+  assert.match(tokenContract, /mintAuthorityActive/);
+  assert.match(tokenContract, /revokeMintAuthority/);
+});

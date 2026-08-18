@@ -10,13 +10,17 @@ import {
   createNoopSigner,
   createSolanaRpc,
   createTransactionMessage,
+  generateKeyPairSigner,
   getBase58Decoder,
   getTransactionEncoder,
+  partiallySignTransactionMessageWithSigners,
   pipe,
   setTransactionMessageFeePayer,
   setTransactionMessageLifetimeUsingBlockhash,
+  type Instruction,
 } from "@solana/kit";
-import { getTransferSolInstruction } from "@solana-program/system";
+import { getCreateAccountInstruction, getTransferSolInstruction } from "@solana-program/system";
+import { AuthorityType, TOKEN_PROGRAM_ADDRESS, findAssociatedTokenPda, getCreateAssociatedTokenIdempotentInstruction, getCreateAssociatedTokenInstruction, getInitializeMint2Instruction, getMintToInstruction, getSetAuthorityInstruction, getTransferCheckedInstruction } from "@solana-program/token";
 import { create as createCoreAsset, createCollection as createCoreCollection, fetchCollection, mplCore, ruleSet } from "@metaplex-foundation/mpl-core";
 import { create as createCoreCandyMachine, mintV1 as mintCoreCandyMachine, mplCandyMachine } from "@metaplex-foundation/mpl-core-candy-machine";
 import { createNoopSigner as createUmiNoopSigner, generateSigner, none, publicKey, signerIdentity, sol, some } from "@metaplex-foundation/umi";
@@ -90,6 +94,27 @@ type LaunchDeployment = {
   contractAddress: string;
   mintHash?: string;
   assetAddress?: string;
+};
+type CampusToken = {
+  id: string;
+  chain: Chain;
+  network: "sepolia" | "solana_devnet";
+  standard: "erc20" | "spl";
+  name: string;
+  symbol: string;
+  description: string;
+  purpose: string;
+  totalSupply: string;
+  decimals: number;
+  authorityMode: "keep" | "revoke";
+  creatorAddress: string;
+  tokenAddress: string;
+  creatorTokenAccount: string | null;
+  deployTxHash: string;
+  creator: { username: string; displayName: string };
+  owned: string;
+  holders: number;
+  transferCount: number;
 };
 type WalletAssetView = "all" | "tokens" | "nfts";
 type UsdPrices = { ethereum: number; solana: number; updatedAt: number };
@@ -306,6 +331,13 @@ const campusEditionMintAbi = [{
   inputs: [{ name: "amount", type: "uint256" }],
   outputs: [],
 }] as const;
+const campusTokenTransferAbi = [{
+  type: "function",
+  name: "transfer",
+  stateMutability: "nonpayable",
+  inputs: [{ name: "to", type: "address" }, { name: "value", type: "uint256" }],
+  outputs: [{ name: "", type: "bool" }],
+}] as const;
 
 export default function OnchainLab() {
   const { ready: privyReady, authenticated, user, login, logout, linkWallet, exportWallet: exportEthereumWallet } = usePrivy();
@@ -344,6 +376,7 @@ export default function OnchainLab() {
   const [launchDeployment, setLaunchDeployment] = useState<LaunchDeployment | null>(null);
   const [walletAssetView, setWalletAssetView] = useState<WalletAssetView>("all");
   const [walletNfts, setWalletNfts] = useState<WalletNft[]>([]);
+  const [campusTokens, setCampusTokens] = useState<CampusToken[]>([]);
   const [walletAssetsLoading, setWalletAssetsLoading] = useState(false);
   const [walletAssetsError, setWalletAssetsError] = useState("");
   const [marketCollections, setMarketCollections] = useState<MarketCollection[]>([]);
@@ -354,6 +387,11 @@ export default function OnchainLab() {
   const [selectedMarketId, setSelectedMarketId] = useState<string | null>(null);
   const [marketBuyingId, setMarketBuyingId] = useState<string | null>(null);
   const [marketPurchaseHash, setMarketPurchaseHash] = useState<string | null>(null);
+  const [selectedTokenId, setSelectedTokenId] = useState<string | null>(null);
+  const [tokenRecipient, setTokenRecipient] = useState("");
+  const [tokenAmount, setTokenAmount] = useState("");
+  const [tokenBusy, setTokenBusy] = useState(false);
+  const [tokenError, setTokenError] = useState("");
   const [transactionQueue, setTransactionQueue] = useState<{ position: number; seconds: number } | null>(null);
   const [marketArea, setMarketArea] = useState<"nfts" | "tokens" | "rwas">("nfts");
   const [rwaState, setRwaState] = useState<RwaState | null>(null);
@@ -408,6 +446,7 @@ export default function OnchainLab() {
     return chainMatches && textMatches;
   });
   const selectedMarket = marketCollections.find((collection) => collection.id === selectedMarketId) ?? null;
+  const selectedToken = campusTokens.find((token) => token.id === selectedTokenId) ?? null;
 
   useEffect(() => {
     identityTokenRef.current = identityToken;
@@ -527,10 +566,16 @@ export default function OnchainLab() {
     setWalletAssetsLoading(true);
     setWalletAssetsError("");
     try {
-      const response = await fetch("/api/launch", { headers: { "privy-id-token": identityToken } });
+      const [response, tokenResponse] = await Promise.all([
+        fetch("/api/launch", { headers: { "privy-id-token": identityToken } }),
+        fetch("/api/tokens", { headers: { "privy-id-token": identityToken } }),
+      ]);
       const result = await response.json() as { nfts?: WalletNft[]; resumableLaunch?: ResumableLaunch | null; error?: string };
+      const tokenResult = await tokenResponse.json() as { tokens?: CampusToken[]; error?: string };
       if (!response.ok) throw new Error(result.error ?? "Wallet assets are unavailable");
+      if (!tokenResponse.ok) throw new Error(tokenResult.error ?? "Campus tokens are unavailable");
       setWalletNfts(result.nfts ?? []);
+      setCampusTokens(tokenResult.tokens ?? []);
       if (result.resumableLaunch && !launchDeployment) {
         const pending = result.resumableLaunch;
         setLaunchDraft({
@@ -574,6 +619,12 @@ export default function OnchainLab() {
       const result = await response.json() as { collections?: MarketCollection[]; error?: string };
       if (!response.ok) throw new Error(result.error ?? "Campus Market is unavailable");
       setMarketCollections(result.collections ?? []);
+      const requestToken = await campusIdentityToken();
+      if (requestToken) {
+        const tokenResponse = await fetch("/api/tokens", { headers: { "privy-id-token": requestToken } });
+        const tokenResult = await tokenResponse.json() as { tokens?: CampusToken[]; error?: string };
+        if (tokenResponse.ok) setCampusTokens(tokenResult.tokens ?? []);
+      }
     } catch (error) {
       setMarketError(error instanceof Error ? error.message : "Campus Market is unavailable");
     } finally {
@@ -1072,6 +1123,77 @@ export default function OnchainLab() {
     }
   }
 
+  async function sendCampusToken(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedToken) return;
+    const cleanUsername = tokenRecipient.trim().toLowerCase().replace(/^@/, "");
+    const amount = BigInt(tokenAmount || "0");
+    if (!/^[a-z][a-z0-9_]{2,23}$/.test(cleanUsername)) return setTokenError("Enter a valid Campus username");
+    if (!/^\d+$/.test(tokenAmount) || amount < 1n) return setTokenError("Send at least 1 whole token");
+    if (amount > BigInt(selectedToken.owned)) return setTokenError(`You have ${selectedToken.owned} ${selectedToken.symbol}`);
+    setTokenBusy(true);
+    setTokenError("");
+    try {
+      const resolvedResponse = await fetch(`/api/resolve/${encodeURIComponent(cleanUsername)}`);
+      const resolved = await resolvedResponse.json() as Recipient & { error?: string };
+      if (!resolvedResponse.ok) throw new Error(resolved.error ?? "Username not found");
+      const destination = resolved.wallets.find((item) => item.chain === selectedToken.chain)?.address;
+      if (!destination) throw new Error(`@${cleanUsername} has no Campus ${selectedToken.chain === "ethereum" ? "Ethereum" : "Solana"} wallet`);
+      const ownAddress = selectedToken.chain === "ethereum" ? ethereumWallet?.address : solanaWallet?.address;
+      if (!ownAddress || ownAddress.toLowerCase() === destination.toLowerCase()) throw new Error("Choose another student");
+      let transactionHash = "";
+      if (selectedToken.chain === "ethereum") {
+        if (!ethereumWallet) throw new Error("Your Campus Ethereum wallet is unavailable");
+        await ethereumWallet.switchChain(11155111);
+        const data = encodeFunctionData({ abi: campusTokenTransferAbi, functionName: "transfer", args: [destination as Hex, amount * (10n ** BigInt(selectedToken.decimals))] });
+        const { hash } = await sendEthereumTransaction({ to: selectedToken.tokenAddress as Hex, data, chainId: 11155111 }, { address: ethereumWallet.address, uiOptions: { showWalletUIs: true } });
+        const receipt = await sepoliaPublicClient.waitForTransactionReceipt({ hash: hash as Hex });
+        if (receipt.status !== "success") throw new Error("Sepolia rejected the token transfer");
+        transactionHash = hash;
+      } else {
+        if (!solanaWallet) throw new Error("Your Campus Solana wallet is unavailable");
+        await waitForCampusSolanaTurn();
+        const owner = createNoopSigner(address(solanaWallet.address));
+        const mint = address(selectedToken.tokenAddress);
+        const [source] = await findAssociatedTokenPda({ owner: owner.address, mint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+        const [destinationAccount] = await findAssociatedTokenPda({ owner: address(destination), mint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+        const instructions = [
+          getCreateAssociatedTokenIdempotentInstruction({ payer: owner, ata: destinationAccount, owner: address(destination), mint }),
+          getTransferCheckedInstruction({ source, mint, destination: destinationAccount, authority: owner, amount: amount * (10n ** BigInt(selectedToken.decimals)), decimals: selectedToken.decimals }),
+        ];
+        const { value: latestBlockhash } = await solanaDevnetRpc.getLatestBlockhash().send();
+        const transaction = pipe(
+          createTransactionMessage({ version: 0 }),
+          (tx) => setTransactionMessageFeePayer(owner.address, tx),
+          (tx) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, tx),
+          (tx) => appendTransactionMessageInstructions(instructions, tx),
+          (tx) => compileTransaction(tx),
+          (tx) => new Uint8Array(getTransactionEncoder().encode(tx)),
+        );
+        const { signature } = await sendCampusSolanaTransaction(transaction);
+        transactionHash = getBase58Decoder().decode(signature);
+        await waitForSolanaConfirmation(transactionHash);
+      }
+      const requestToken = await campusIdentityToken();
+      if (!requestToken) throw new Error("Your Campus session expired after the transfer. The on-chain transfer is safe.");
+      const record = await fetch("/api/tokens", {
+        method: "POST",
+        headers: { "content-type": "application/json", "privy-id-token": requestToken },
+        body: JSON.stringify({ action: "record_transfer", tokenId: selectedToken.id, toUsername: cleanUsername, amount: amount.toString(), transactionHash, fromAddress: ownAddress, toAddress: destination }),
+      });
+      const result = await record.json() as { error?: string };
+      if (!record.ok) throw new Error(result.error ?? "The transfer succeeded, but Campus could not save the receipt");
+      setTokenAmount("");
+      setTokenRecipient("");
+      await loadWalletAssets();
+      notify(`${amount.toString()} ${selectedToken.symbol} sent to @${cleanUsername}`);
+    } catch (error) {
+      setTokenError(error instanceof Error ? error.message : "The token transfer was not completed");
+    } finally {
+      setTokenBusy(false);
+    }
+  }
+
   function resetTransferForChain(chain: Chain) {
     setActiveChain(chain);
     setRecipient(null);
@@ -1323,6 +1445,107 @@ export default function OnchainLab() {
     if (!response.ok) throw new Error(result.error ?? "The launch receipt could not be saved");
   }
 
+  async function prepareTokenRecord() {
+    if (!launchDraft || launchDraft.assetType !== "token") throw new Error("Open a token draft first");
+    const creatorAddress = launchDraft.chain === "ethereum" ? ethereumWallet?.address : solanaWallet?.address;
+    if (!creatorAddress) throw new Error(`Your Campus ${launchDraft.chain === "ethereum" ? "Ethereum" : "Solana"} wallet is unavailable`);
+    const requestToken = await campusIdentityToken();
+    if (!requestToken) throw new Error("Your Campus session expired. Refresh the page and try again.");
+    const response = await fetch("/api/tokens", {
+      method: "POST",
+      headers: { "content-type": "application/json", "privy-id-token": requestToken },
+      body: JSON.stringify({
+        action: "prepare", chain: launchDraft.chain, creatorAddress, name: launchDraft.name,
+        symbol: launchDraft.symbol, description: launchDraft.description, purpose: launchDraft.purpose,
+        supply: launchDraft.supply, decimals: launchDraft.decimals ?? (launchDraft.chain === "ethereum" ? 18 : 9),
+        authorityMode: launchDraft.authorityMode ?? "keep",
+      }),
+    });
+    const result = await response.json() as { tokenId?: string; deploymentData?: Hex; error?: string };
+    if (!response.ok || !result.tokenId) throw new Error(result.error ?? "The Campus token could not be prepared");
+    return result;
+  }
+
+  async function recordTokenDeployment(tokenId: string, transactionHash: string, tokenAddress: string, creatorTokenAccount?: string) {
+    const requestToken = await campusIdentityToken();
+    if (!requestToken) throw new Error("Your Campus session expired after deployment. Your token is safe; refresh once to save it.");
+    const response = await fetch("/api/tokens", {
+      method: "POST",
+      headers: { "content-type": "application/json", "privy-id-token": requestToken },
+      body: JSON.stringify({ action: "record_deploy", tokenId, transactionHash, tokenAddress, creatorTokenAccount }),
+    });
+    const result = await response.json() as { error?: string };
+    if (!response.ok) throw new Error(result.error ?? "The token deployed, but Campus could not save its receipt");
+  }
+
+  async function deploySepoliaToken() {
+    if (!launchDraft || launchDraft.assetType !== "token" || !ethereumWallet) return;
+    setLaunchTransactionError("");
+    setLaunchTransactionStatus("uploading");
+    try {
+      const prepared = await prepareTokenRecord();
+      if (!prepared.deploymentData) throw new Error("The Sepolia token deployment is incomplete");
+      await ethereumWallet.switchChain(11155111);
+      setLaunchTransactionStatus("awaiting_signature");
+      const { hash } = await sendEthereumTransaction({ data: prepared.deploymentData, chainId: 11155111 }, { address: ethereumWallet.address, uiOptions: { showWalletUIs: true } });
+      setLaunchTransactionStatus("confirming");
+      const receipt = await sepoliaPublicClient.waitForTransactionReceipt({ hash: hash as Hex });
+      if (receipt.status !== "success" || !receipt.contractAddress) throw new Error("Sepolia rejected the deployment. No token was created.");
+      await recordTokenDeployment(prepared.tokenId!, hash, receipt.contractAddress);
+      setLaunchDeployment({ chain: "ethereum", launchId: prepared.tokenId!, metadataUrl: "", deployHash: hash, contractAddress: receipt.contractAddress });
+      setLaunchTransactionStatus("deployed");
+      await loadWalletAssets();
+      notify(`${launchDraft.symbol} is live on Sepolia`);
+    } catch (error) {
+      setLaunchTransactionStatus("error");
+      setLaunchTransactionError(error instanceof Error ? error.message : "The Sepolia token was not deployed");
+    }
+  }
+
+  async function deploySolanaToken() {
+    if (!launchDraft || launchDraft.assetType !== "token" || !solanaWallet) return;
+    setLaunchTransactionError("");
+    setLaunchTransactionStatus("uploading");
+    try {
+      const prepared = await prepareTokenRecord();
+      await waitForCampusSolanaTurn();
+      const payer = createNoopSigner(address(solanaWallet.address));
+      const mint = await generateKeyPairSigner();
+      const [creatorTokenAccount] = await findAssociatedTokenPda({ owner: payer.address, mint: mint.address, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+      const rent = await solanaDevnetRpc.getMinimumBalanceForRentExemption(82n).send();
+      const decimals = launchDraft.decimals ?? 9;
+      const supplyUnits = BigInt(launchDraft.supply) * (10n ** BigInt(decimals));
+      const instructions: Instruction[] = [
+        getCreateAccountInstruction({ payer, newAccount: mint, lamports: rent, space: 82n, programAddress: TOKEN_PROGRAM_ADDRESS }),
+        getInitializeMint2Instruction({ mint: mint.address, decimals, mintAuthority: payer.address, freezeAuthority: launchDraft.authorityMode === "keep" ? payer.address : null }),
+        getCreateAssociatedTokenInstruction({ payer, ata: creatorTokenAccount, owner: payer.address, mint: mint.address }),
+        getMintToInstruction({ mint: mint.address, token: creatorTokenAccount, mintAuthority: payer, amount: supplyUnits }),
+      ];
+      if (launchDraft.authorityMode === "revoke") instructions.push(getSetAuthorityInstruction({ owned: mint.address, owner: payer, authorityType: AuthorityType.MintTokens, newAuthority: null }));
+      const { value: latestBlockhash } = await solanaDevnetRpc.getLatestBlockhash().send();
+      const message = pipe(
+        createTransactionMessage({ version: 0 }),
+        (tx) => setTransactionMessageFeePayer(payer.address, tx),
+        (tx) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, tx),
+        (tx) => appendTransactionMessageInstructions(instructions, tx),
+      );
+      const partiallySigned = await partiallySignTransactionMessageWithSigners(message);
+      setLaunchTransactionStatus("awaiting_signature");
+      const { signature } = await sendCampusSolanaTransaction(new Uint8Array(getTransactionEncoder().encode(partiallySigned)));
+      const hash = getBase58Decoder().decode(signature);
+      setLaunchTransactionStatus("confirming");
+      await waitForSolanaConfirmation(hash);
+      await recordTokenDeployment(prepared.tokenId!, hash, mint.address, creatorTokenAccount);
+      setLaunchDeployment({ chain: "solana", launchId: prepared.tokenId!, metadataUrl: "", deployHash: hash, contractAddress: mint.address });
+      setLaunchTransactionStatus("deployed");
+      await loadWalletAssets();
+      notify(`${launchDraft.symbol} is live on Solana Devnet`);
+    } catch (error) {
+      setLaunchTransactionStatus("error");
+      setLaunchTransactionError(error instanceof Error ? error.message : "The Solana token was not deployed");
+    }
+  }
+
   async function deploySepoliaEdition() {
     if (!launchDraft || launchDraft.assetType !== "nft_collection") return;
     if (launchDraft.chain !== "ethereum") return notify("The Solana deployment adapter is the next connector. Choose Sepolia to deploy now.");
@@ -1541,6 +1764,7 @@ export default function OnchainLab() {
   }
 
   function deployLaunchCollection() {
+    if (launchDraft?.assetType === "token") return void (launchDraft.chain === "solana" ? deploySolanaToken() : deploySepoliaToken());
     if (launchDraft?.chain === "solana") return void deploySolanaCollection();
     return void deploySepoliaEdition();
   }
@@ -1771,6 +1995,7 @@ export default function OnchainLab() {
                 {(walletAssetView === "all" || walletAssetView === "tokens") && <div className="wallet-token-grid">
                   <article><span className="chain-coin eth">Ξ</span><div><small>ETHEREUM · SEPOLIA</small><b>{balance.toFixed(4)} ETH</b><strong>{usdPrices ? `≈ ${formatUsd(balance * usdPrices.ethereum)}` : "USD reference unavailable"}</strong><em>Reference only · test token</em></div><a href={`https://sepolia.etherscan.io/address/${ethWalletAddress}`} target="_blank" rel="noreferrer">Explorer ↗</a></article>
                   <article><span className="chain-coin sol">S</span><div><small>SOLANA · DEVNET</small><b>{solBalance.toFixed(3)} SOL</b><strong>{usdPrices ? `≈ ${formatUsd(solBalance * usdPrices.solana)}` : "USD reference unavailable"}</strong><em>Reference only · test token</em></div><a href={`https://explorer.solana.com/address/${solWalletAddress}?cluster=devnet`} target="_blank" rel="noreferrer">Explorer ↗</a></article>
+                  {campusTokens.filter((token) => BigInt(token.owned) > 0n).map((token) => <article key={token.id}><span className={`chain-coin ${token.chain === "ethereum" ? "eth" : "sol"}`}>{token.symbol.slice(0, 2)}</span><div><small>{token.standard.toUpperCase()} · {token.chain === "ethereum" ? "SEPOLIA" : "SOLANA DEVNET"}</small><b>{Number(token.owned).toLocaleString()} {token.symbol}</b><strong>Campus token · no USD value</strong><em>{token.authorityMode === "revoke" ? "Fixed supply" : "Creator mint authority active"}</em></div><button onClick={() => { setSelectedTokenId(token.id); setMarketArea("tokens"); setActive("market"); }}>Send →</button></article>)}
                 </div>}
                 {(walletAssetView === "all" || walletAssetView === "nfts") && <div className="wallet-nft-area">
                   <div className="wallet-nft-title"><b>NFTs in your Campus wallet</b><small>{walletNfts.length} launchpad item{walletNfts.length === 1 ? "" : "s"}</small></div>
@@ -1857,10 +2082,11 @@ export default function OnchainLab() {
                   <button className="primary full" type="submit">Prepare wallet review →</button>
                 </form>
                 {launchReviewReady && <div className="wallet-approval-panel">
-                  <div><span>{launchDeployment ? "✓" : "1"}</span><section><b>{launchDeployment ? launchDeployment.chain === "ethereum" ? "Collection contract deployed" : "Core collection created" : "Step 1 · Deploy the collection"}</b><p>{launchDeployment ? launchDeployment.chain === "ethereum" ? `ERC-1155 edition contract ${shortenAddress(launchDeployment.contractAddress)} is live on Sepolia.` : `Metaplex Core collection ${shortenAddress(launchDeployment.contractAddress)} is live on Solana Devnet.` : launchDraft.chain === "ethereum" ? "Your wallet will show the exact Sepolia contract deployment and estimated test gas before anything is sent." : "Your wallet will show the Metaplex Core collection transaction and Devnet fee before anything is sent."}</p></section></div>
-                  {!launchDeployment && <button disabled={["uploading", "awaiting_signature", "confirming"].includes(launchTransactionStatus)} onClick={deployLaunchCollection}>{launchTransactionStatus === "uploading" ? "Securing artwork…" : launchTransactionStatus === "awaiting_signature" ? "Check your wallet…" : launchTransactionStatus === "confirming" ? `Waiting for ${launchDraft.chain === "ethereum" ? "Sepolia" : "Solana Devnet"}…` : launchDraft.chain === "ethereum" ? "Approve Sepolia deployment →" : "Approve Solana collection →"}</button>}
-                  {launchDeployment && <div className="launch-receipt-links"><a href={launchDeployment.chain === "ethereum" ? `https://sepolia.etherscan.io/address/${launchDeployment.contractAddress}` : `https://core.metaplex.com/explorer/${launchDeployment.contractAddress}?env=devnet`} target="_blank" rel="noreferrer">View {launchDeployment.chain === "ethereum" ? "contract" : "collection"} ↗</a><a href={launchDeployment.chain === "ethereum" ? `https://sepolia.etherscan.io/tx/${launchDeployment.deployHash}` : `https://explorer.solana.com/tx/${launchDeployment.deployHash}?cluster=devnet`} target="_blank" rel="noreferrer">Deployment receipt ↗</a><a href={launchDeployment.metadataUrl} target="_blank" rel="noreferrer">NFT metadata ↗</a></div>}
-                  {launchDeployment && <div className="launch-mint-step"><div><span>{launchTransactionStatus === "minted" ? "✓" : "2"}</span><section><b>Step 2 · Mint the first NFT</b><p>{launchTransactionStatus === "minted" ? `1 of ${launchDraft.supply} editions is now minted to your Campus wallet.` : `${launchDeployment.chain === "ethereum" ? "The contract" : "The collection"} exists, but no NFT has been minted yet. Mint edition #1 of ${launchDraft.supply}.`}</p></section></div>{launchTransactionStatus !== "minted" && <button disabled={launchTransactionStatus === "minting"} onClick={mintFirstLaunchEdition}>{launchTransactionStatus === "minting" ? "Confirming first mint…" : "Mint first edition →"}</button>}{launchDeployment.assetAddress && <a href={`https://core.metaplex.com/explorer/${launchDeployment.assetAddress}?env=devnet`} target="_blank" rel="noreferrer">View NFT ↗</a>}{launchDeployment.mintHash && <a href={launchDeployment.chain === "ethereum" ? `https://sepolia.etherscan.io/tx/${launchDeployment.mintHash}` : `https://explorer.solana.com/tx/${launchDeployment.mintHash}?cluster=devnet`} target="_blank" rel="noreferrer">View mint receipt ↗</a>}</div>}
+                  <div><span>{launchDeployment ? "✓" : "1"}</span><section><b>{launchDeployment ? launchDraft.assetType === "token" ? "Token deployed" : launchDeployment.chain === "ethereum" ? "Collection contract deployed" : "Core collection created" : `Step 1 · Deploy the ${launchDraft.assetType === "token" ? "token" : "collection"}`}</b><p>{launchDeployment ? launchDraft.assetType === "token" ? `${launchDraft.supply.toLocaleString()} ${launchDraft.symbol} is in your Campus wallet on ${launchDeployment.chain === "ethereum" ? "Sepolia" : "Solana Devnet"}.` : launchDeployment.chain === "ethereum" ? `ERC-1155 edition contract ${shortenAddress(launchDeployment.contractAddress)} is live on Sepolia.` : `Metaplex Core collection ${shortenAddress(launchDeployment.contractAddress)} is live on Solana Devnet.` : launchDraft.assetType === "token" ? `Your wallet will approve the token creation and receive the full starting supply. ${launchDraft.authorityMode === "revoke" ? "Mint authority will be removed for a fixed supply." : "Mint authority stays with your wallet for learning."}` : launchDraft.chain === "ethereum" ? "Your wallet will show the exact Sepolia contract deployment and estimated test gas before anything is sent." : "Your wallet will show the Metaplex Core collection transaction and Devnet fee before anything is sent."}</p></section></div>
+                  {!launchDeployment && <button disabled={["uploading", "awaiting_signature", "confirming"].includes(launchTransactionStatus)} onClick={deployLaunchCollection}>{launchTransactionStatus === "uploading" ? launchDraft.assetType === "token" ? "Preparing token…" : "Securing artwork…" : launchTransactionStatus === "awaiting_signature" ? "Check your wallet…" : launchTransactionStatus === "confirming" ? `Waiting for ${launchDraft.chain === "ethereum" ? "Sepolia" : "Solana Devnet"}…` : launchDraft.chain === "ethereum" ? "Approve Sepolia deployment →" : launchDraft.assetType === "token" ? "Approve Solana token →" : "Approve Solana collection →"}</button>}
+                  {launchDeployment && <div className="launch-receipt-links"><a href={launchDeployment.chain === "ethereum" ? `https://sepolia.etherscan.io/address/${launchDeployment.contractAddress}` : launchDraft.assetType === "token" ? `https://explorer.solana.com/address/${launchDeployment.contractAddress}?cluster=devnet` : `https://core.metaplex.com/explorer/${launchDeployment.contractAddress}?env=devnet`} target="_blank" rel="noreferrer">View {launchDraft.assetType === "token" ? "token" : launchDeployment.chain === "ethereum" ? "contract" : "collection"} ↗</a><a href={launchDeployment.chain === "ethereum" ? `https://sepolia.etherscan.io/tx/${launchDeployment.deployHash}` : `https://explorer.solana.com/tx/${launchDeployment.deployHash}?cluster=devnet`} target="_blank" rel="noreferrer">Deployment receipt ↗</a>{launchDeployment.metadataUrl && <a href={launchDeployment.metadataUrl} target="_blank" rel="noreferrer">NFT metadata ↗</a>}</div>}
+                  {launchDeployment && launchDraft.assetType === "nft_collection" && <div className="launch-mint-step"><div><span>{launchTransactionStatus === "minted" ? "✓" : "2"}</span><section><b>Step 2 · Mint the first NFT</b><p>{launchTransactionStatus === "minted" ? `1 of ${launchDraft.supply} editions is now minted to your Campus wallet.` : `${launchDeployment.chain === "ethereum" ? "The contract" : "The collection"} exists, but no NFT has been minted yet. Mint edition #1 of ${launchDraft.supply}.`}</p></section></div>{launchTransactionStatus !== "minted" && <button disabled={launchTransactionStatus === "minting"} onClick={mintFirstLaunchEdition}>{launchTransactionStatus === "minting" ? "Confirming first mint…" : "Mint first edition →"}</button>}{launchDeployment.assetAddress && <a href={`https://core.metaplex.com/explorer/${launchDeployment.assetAddress}?env=devnet`} target="_blank" rel="noreferrer">View NFT ↗</a>}{launchDeployment.mintHash && <a href={launchDeployment.chain === "ethereum" ? `https://sepolia.etherscan.io/tx/${launchDeployment.mintHash}` : `https://explorer.solana.com/tx/${launchDeployment.mintHash}?cluster=devnet`} target="_blank" rel="noreferrer">View mint receipt ↗</a>}</div>}
+                  {launchDeployment && launchDraft.assetType === "token" && <button onClick={() => { setMarketArea("tokens"); setActive("market"); void loadMarket(); }}>Open token market →</button>}
                   {launchTransactionError && <p className="launch-transaction-error">{launchTransactionError} {!/wallet|session/i.test(launchTransactionError) && <>Check that the Campus wallet has enough {launchDraft.chain === "ethereum" ? "Sepolia ETH" : "Devnet SOL"} for the network fee, then try again.</>}</p>}
                   <small>Your wallet—not Mask—always gives the final approval. Testnet assets have no monetary value.</small>
                 </div>}
@@ -1891,11 +2117,13 @@ export default function OnchainLab() {
               <section className="market-secondary card"><div><span className="eyebrow">NEXT MARKET LAYER</span><h3>List, buy and resell safely.</h3><p>Secondary sales need an atomic marketplace contract so payment and ownership move together. We’ll add this after the public discovery and primary mint flow is proven.</p></div><button onClick={() => setActive("wallet")}>View my assets →</button></section>
               </>}
               {marketArea === "tokens" && <div className="token-market-stack">
-                <section className="token-market-intro card"><div><span className="eyebrow">TOKEN LAB · COMING NEXT</span><h2>Launch a token.<br />Understand its economy.</h2><p>Students will define supply, decimals and authority, deploy on Sepolia or Solana Devnet, then transfer and exchange testnet tokens with classmates.</p></div><button onClick={() => setActive("mask")}>Plan a token with Mask →</button></section>
+                <section className="token-market-intro card"><div><span className="eyebrow">LIVE TOKEN LAB · SEPOLIA + SOLANA DEVNET</span><h2>Launch a token.<br />Move its economy.</h2><p>Every token here was wallet-approved by a Campus student. Holders can exchange whole test tokens directly by username and inspect the on-chain receipt.</p></div><button onClick={() => setActive("mask")}>Launch with Mask →</button></section>
+                {selectedToken && <section className="token-exchange card"><div className="token-exchange-identity"><span className={`token-symbol-orb ${selectedToken.chain}`}>{selectedToken.symbol.slice(0, 3)}</span><div><small>{selectedToken.standard.toUpperCase()} · {selectedToken.chain === "ethereum" ? "SEPOLIA" : "SOLANA DEVNET"}</small><h3>{selectedToken.name}</h3><p>{selectedToken.description}</p></div><button onClick={() => { setSelectedTokenId(null); setTokenError(""); }} aria-label="Close token exchange">×</button></div><div className="token-exchange-facts"><span><small>YOUR BALANCE</small><b>{Number(selectedToken.owned).toLocaleString()} {selectedToken.symbol}</b></span><span><small>TOTAL SUPPLY</small><b>{Number(selectedToken.totalSupply).toLocaleString()}</b></span><span><small>HOLDERS</small><b>{selectedToken.holders}</b></span><span><small>AUTHORITY</small><b>{selectedToken.authorityMode === "revoke" ? "Fixed" : "Creator kept"}</b></span></div>{BigInt(selectedToken.owned) > 0n ? <form className="token-send-form" onSubmit={sendCampusToken}><label>Send to Campus username<div><span>@</span><input value={tokenRecipient} onChange={(event) => { setTokenRecipient(event.target.value); setTokenError(""); }} placeholder="classmate" /></div></label><label>Whole tokens<input inputMode="numeric" value={tokenAmount} onChange={(event) => { setTokenAmount(event.target.value.replace(/\D/g, "")); setTokenError(""); }} placeholder="100" /></label><button disabled={tokenBusy || !tokenRecipient || !tokenAmount}>{tokenBusy ? "Waiting for wallet…" : `Send ${selectedToken.symbol} →`}</button></form> : <div className="token-no-balance">Ask @{selectedToken.creator.username} or another holder to send you some {selectedToken.symbol} by Campus username.</div>}{tokenError && <div className="market-message error">{tokenError}</div>}<div className="token-proof"><span>Created by @{selectedToken.creator.username}</span><a href={selectedToken.chain === "ethereum" ? `https://sepolia.etherscan.io/token/${selectedToken.tokenAddress}` : `https://explorer.solana.com/address/${selectedToken.tokenAddress}?cluster=devnet`} target="_blank" rel="noreferrer">View token onchain ↗</a></div></section>}
+                {campusTokens.length ? <div className="token-live-grid">{campusTokens.map((token) => <article className="token-live-card card" key={token.id}><button onClick={() => { setSelectedTokenId(token.id); setTokenRecipient(""); setTokenAmount(""); setTokenError(""); window.scrollTo({ top: 0, behavior: "smooth" }); }}><span className={`token-symbol-orb ${token.chain}`}>{token.symbol.slice(0, 3)}</span><div><small>{token.chain === "ethereum" ? "ETHEREUM · SEPOLIA" : "SOLANA · DEVNET"}</small><h3>{token.name}</h3><b>{token.symbol}</b><p>{token.purpose}</p></div><div className="token-live-stats"><span><small>SUPPLY</small><b>{Number(token.totalSupply).toLocaleString()}</b></span><span><small>YOU OWN</small><b>{Number(token.owned).toLocaleString()}</b></span><span><small>MOVES</small><b>{token.transferCount}</b></span></div><em>{BigInt(token.owned) > 0n ? "Send or inspect →" : "Inspect token →"}</em></button></article>)}</div> : <div className="market-message"><b>No student tokens are live yet.</b><span>Ask Mask to prepare the first Sepolia or Solana Devnet token.</span></div>}
                 <div className="token-flow-grid">
-                  {[{ n: "01", title: "Design", copy: "Choose the token’s purpose, supply, distribution and permissions." }, { n: "02", title: "Deploy", copy: "Review the exact testnet transaction in the Campus wallet." }, { n: "03", title: "Distribute", copy: "Send tokens by Campus username and inspect every receipt." }, { n: "04", title: "Exchange", copy: "Learn liquidity, pricing and slippage using assets with no real value." }].map((item) => <article className="card" key={item.n}><span>{item.n}</span><h3>{item.title}</h3><p>{item.copy}</p></article>)}
+                  {[{ n: "01", title: "Design", copy: "Choose purpose, supply, decimals and mint authority." }, { n: "02", title: "Deploy", copy: "Approve the real testnet creation in your Campus wallet." }, { n: "03", title: "Distribute", copy: "Send test tokens by username with an on-chain receipt." }, { n: "04", title: "Add liquidity", copy: "The next lab will create a pool and explain pricing and slippage." }].map((item) => <article className="card" key={item.n}><span>{item.n}</span><h3>{item.title}</h3><p>{item.copy}</p></article>)}
                 </div>
-                <section className="token-safety card"><div><span>TESTNET FIRST</span><b>No real-money trading is enabled.</b></div><p>The live token launcher and swap engine will be connected only after transaction review and classroom safety controls are ready.</p></section>
+                <section className="token-safety card"><div><span>PEER EXCHANGE IS LIVE</span><b>Liquidity pools come next.</b></div><p>Sending a token and trading through a pool are different actions. This version teaches ownership and distribution first; no real-money trading is enabled.</p></section>
               </div>}
               {marketArea === "rwas" && <div className="rwa-market-stack">
                 <section className="rwa-intro card"><div><span className="eyebrow">RWA PRACTICE MARKET · FICTIONAL ASSETS</span><h2>Turn a thing into units.<br />Learn what ownership means.</h2><p>Trade imaginary tokenised assets with practice credits, see how fractional ownership changes a portfolio and question what the token legally represents.</p><div className="rwa-warning">SIMULATION ONLY · NO LEGAL OWNERSHIP · NO REAL VALUE</div></div><aside><small>PRACTICE BALANCE</small><strong>{(rwaState?.balanceCredits ?? 10000).toLocaleString()}</strong><span>Campus credits</span></aside></section>

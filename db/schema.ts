@@ -177,6 +177,49 @@ export const campusTransactionQueues = sqliteTable("campus_transaction_queues", 
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+export const testnetTokens = sqliteTable("testnet_tokens", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  chain: text("chain", { enum: ["ethereum", "solana"] }).notNull(),
+  network: text("network", { enum: ["sepolia", "solana_devnet"] }).notNull(),
+  standard: text("standard", { enum: ["erc20", "spl"] }).notNull(),
+  name: text("name").notNull(),
+  symbol: text("symbol").notNull(),
+  description: text("description").notNull(),
+  purpose: text("purpose").notNull(),
+  totalSupply: text("total_supply").notNull(),
+  decimals: integer("decimals").notNull(),
+  authorityMode: text("authority_mode", { enum: ["keep", "revoke"] }).notNull(),
+  creatorAddress: text("creator_address").notNull(),
+  tokenAddress: text("token_address"),
+  creatorTokenAccount: text("creator_token_account"),
+  status: text("status", { enum: ["prepared", "deployed", "failed"] }).notNull().default("prepared"),
+  deployTxHash: text("deploy_tx_hash"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_testnet_tokens_user_time").on(table.userId, table.createdAt),
+  index("idx_testnet_tokens_status_time").on(table.status, table.updatedAt),
+  uniqueIndex("idx_testnet_tokens_deploy_tx").on(table.deployTxHash),
+]);
+
+export const tokenTransfers = sqliteTable("token_transfers", {
+  id: text("id").primaryKey(),
+  tokenId: text("token_id").notNull().references(() => testnetTokens.id, { onDelete: "cascade" }),
+  fromUserId: text("from_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  toUserId: text("to_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  fromAddress: text("from_address").notNull(),
+  toAddress: text("to_address").notNull(),
+  amount: text("amount").notNull(),
+  transactionHash: text("transaction_hash").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_token_transfers_tx").on(table.transactionHash),
+  index("idx_token_transfers_token_time").on(table.tokenId, table.createdAt),
+  index("idx_token_transfers_from_time").on(table.fromUserId, table.createdAt),
+  index("idx_token_transfers_to_time").on(table.toUserId, table.createdAt),
+]);
+
 export const rwaHoldings = sqliteTable("rwa_holdings", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

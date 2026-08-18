@@ -74,6 +74,19 @@ export const classroomSessions = sqliteTable("classroom_sessions", {
   index("idx_classroom_sessions_status_time").on(table.status, table.startedAt),
 ]);
 
+export const classroomSessionActivity = sqliteTable("classroom_session_activity", {
+  id: text("id").primaryKey(),
+  sessionId: text("session_id").notNull().references(() => classroomSessions.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  status: text("status", { enum: ["working", "needs_help", "completed"] }).notNull().default("working"),
+  proofLabel: text("proof_label"),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  completedAt: text("completed_at"),
+}, (table) => [
+  uniqueIndex("idx_classroom_activity_session_user").on(table.sessionId, table.userId),
+  index("idx_classroom_activity_session_status").on(table.sessionId, table.status),
+]);
+
 export const faucetClaims = sqliteTable("faucet_claims", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

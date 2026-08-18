@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import {
-  campusTransactionQueues, classroomSessions, faucetClaims, lessonProgress, marketPurchases,
+  campusTransactionQueues, classroomSessionActivity, classroomSessions, faucetClaims, lessonProgress, marketPurchases,
   rwaAssets, rwaHoldings, testnetLaunches, testnetTokens, tokenAirdropClaims, tokenAirdrops,
   tokenTransfers, users, wallets,
 } from "../../../../db/schema";
@@ -11,13 +11,14 @@ const quests: Quest[] = ["fund_wallets", "send_token", "mint_nft", "buy_rwa", "l
 
 async function snapshot(request: Request) {
   const { db } = await requireOwner(request);
-  const [studentRows, walletRows, lessonRows, claimRows, launchRows, tokenRows, transferRows, purchaseRows, holdingRows, rwaRows, airdropRows, airdropClaimRows, queueRows, liveRows] = await Promise.all([
+  const [studentRows, walletRows, lessonRows, claimRows, launchRows, tokenRows, transferRows, purchaseRows, holdingRows, rwaRows, airdropRows, airdropClaimRows, queueRows, liveRows, activityRows] = await Promise.all([
     db.select().from(users).where(eq(users.status, "active")).orderBy(desc(users.createdAt)),
     db.select().from(wallets), db.select().from(lessonProgress), db.select().from(faucetClaims),
     db.select().from(testnetLaunches), db.select().from(testnetTokens), db.select().from(tokenTransfers),
     db.select().from(marketPurchases), db.select().from(rwaHoldings), db.select().from(rwaAssets),
     db.select().from(tokenAirdrops), db.select().from(tokenAirdropClaims), db.select().from(campusTransactionQueues),
     db.select().from(classroomSessions).where(eq(classroomSessions.status, "live")).orderBy(desc(classroomSessions.startedAt)).limit(1),
+    db.select().from(classroomSessionActivity),
   ]);
   const students = studentRows.filter((row) => row.role !== "owner");
   const roster = students.map((student) => {
@@ -40,9 +41,16 @@ async function snapshot(request: Request) {
       solFunded: ownClaims.some((row) => row.chain === "solana" && row.status === "sent"),
       assetsCreated: ownLaunches.filter((row) => row.status === "deployed" || row.status === "minted").length + ownTokens.filter((row) => row.status === "deployed").length + rwaRows.filter((row) => row.creatorUserId === student.id).length,
       issues,
+      sessionStatus: null as "working" | "needs_help" | "completed" | null,
+      proofLabel: null as string | null,
     };
   });
   const currentSession = liveRows[0] ?? null;
+  if (currentSession) roster.forEach((student) => {
+    const activity = activityRows.find((row) => row.sessionId === currentSession.id && row.userId === student.id);
+    student.sessionStatus = activity?.status ?? null;
+    student.proofLabel = activity?.proofLabel ?? null;
+  });
   const sessionProgress = currentSession ? roster.filter((student) => {
     if (currentSession.quest === "fund_wallets") return student.ethFunded || student.solFunded;
     if (currentSession.quest === "send_token") return transferRows.some((row) => row.fromUserId === student.id);
@@ -50,7 +58,10 @@ async function snapshot(request: Request) {
     if (currentSession.quest === "buy_rwa") return holdingRows.some((row) => row.userId === student.id && row.units > 0);
     return tokenRows.some((row) => row.userId === student.id && row.status === "deployed");
   }).length : 0;
-  const alerts = roster.flatMap((student) => student.issues.map((message) => ({ userId: student.id, username: student.username, message })));
+  const alerts = roster.flatMap((student) => [
+    ...student.issues.map((message) => ({ userId: student.id, username: student.username, message })),
+    ...(student.sessionStatus === "needs_help" ? [{ userId: student.id, username: student.username, message: "Asked for help with the live quest" }] : []),
+  ]);
   const sentClaims = claimRows.filter((row) => row.status === "sent");
   return {
     metrics: {
@@ -63,7 +74,10 @@ async function snapshot(request: Request) {
       rwas: rwaRows.filter((row) => row.status === "active").length,
       openAirdrops: airdropRows.filter((row) => row.status === "open").length,
     },
-    roster, alerts, queues: queueRows, currentSession, sessionProgress,
+    roster, alerts, queues: queueRows, currentSession,
+    sessionProgress: currentSession ? roster.filter((student) => student.sessionStatus === "completed").length : sessionProgress,
+    sessionWorking: currentSession ? roster.filter((student) => student.sessionStatus === "working").length : 0,
+    sessionNeedsHelp: currentSession ? roster.filter((student) => student.sessionStatus === "needs_help").length : 0,
   };
 }
 

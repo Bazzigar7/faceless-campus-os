@@ -128,4 +128,9 @@ test("educator command centre uses live cohort data and broadcasts classroom que
   assert.match(dashboardRoute, /action === "start_session"/);
   assert.match(sessionRoute, /requireCampusUser/);
   assert.match(schema, /classroom_sessions/);
+  assert.match(schema, /classroom_session_activity/);
+  assert.match(sessionRoute, /Campus OS cannot see the matching onchain proof yet/);
+  assert.match(sessionRoute, /Tokenised asset holding verified/);
+  assert.match(client, /Verify my proof/);
+  assert.match(client, /I need help/);
 });

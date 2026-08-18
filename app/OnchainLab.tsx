@@ -198,13 +198,16 @@ type RwaAsset = { id: string; name: string; symbol: string; category: string; de
 type RwaState = { balanceCredits: number; holdings: RwaHolding[]; trades: RwaTrade[]; distributions: RwaDistribution[]; assets: RwaAsset[]; currentPeriod: string; nextDistributionAt: string };
 type ClassroomQuest = "fund_wallets" | "send_token" | "mint_nft" | "buy_rwa" | "launch_token";
 type ClassroomSession = { id: string; title: string; quest: ClassroomQuest; instructions: string; status: "live" | "ended"; startedAt: string };
+type ClassroomActivity = { status: "working" | "needs_help" | "completed"; proofLabel: string | null };
 type EducatorDashboard = {
   metrics: { activeStudents: number; bothWallets: number; lessonsCompleted: number; onchainActions: number; nftCollections: number; tokens: number; rwas: number; openAirdrops: number };
-  roster: Array<{ id: string; username: string; displayName: string; email: string; ethereumReady: boolean; solanaReady: boolean; lessonsCompleted: number; ethFunded: boolean; solFunded: boolean; assetsCreated: number; issues: string[] }>;
+  roster: Array<{ id: string; username: string; displayName: string; email: string; ethereumReady: boolean; solanaReady: boolean; lessonsCompleted: number; ethFunded: boolean; solFunded: boolean; assetsCreated: number; issues: string[]; sessionStatus: ClassroomActivity["status"] | null; proofLabel: string | null }>;
   alerts: Array<{ userId: string; username: string; message: string }>;
   queues: Array<{ network: string; nextAvailableAt: number }>;
   currentSession: ClassroomSession | null;
   sessionProgress: number;
+  sessionWorking: number;
+  sessionNeedsHelp: number;
 };
 
 type Drop = {
@@ -455,6 +458,8 @@ export default function OnchainLab() {
   const [learningState, setLearningState] = useState<LearningState | null>(null);
   const [learningBusy, setLearningBusy] = useState(false);
   const [classroomSession, setClassroomSession] = useState<ClassroomSession | null>(null);
+  const [classroomActivity, setClassroomActivity] = useState<ClassroomActivity | null>(null);
+  const [classroomActivityBusy, setClassroomActivityBusy] = useState(false);
   const [educatorDashboard, setEducatorDashboard] = useState<EducatorDashboard | null>(null);
   const [educatorBusy, setEducatorBusy] = useState(false);
   const [sessionDraft, setSessionDraft] = useState<{ quest: ClassroomQuest; title: string; instructions: string }>({ quest: "fund_wallets", title: "Fund your first wallet", instructions: "Claim one testnet asset, then open your wallet and find the transaction receipt." });
@@ -544,6 +549,12 @@ export default function OnchainLab() {
   }, [active, faucetState?.role]);
 
   useEffect(() => {
+    if (active !== "admin" || faucetState?.role !== "owner") return;
+    const timer = window.setInterval(() => void loadEducatorDashboard(), 10_000);
+    return () => window.clearInterval(timer);
+  }, [active, faucetState?.role]);
+
+  useEffect(() => {
     if (active !== "market" || marketCollections.length || marketLoading) return;
     void loadMarket();
   }, [active, marketCollections.length, marketLoading]);
@@ -628,9 +639,23 @@ export default function OnchainLab() {
     if (!requestToken) return;
     try {
       const response = await fetch("/api/session", { headers: { "privy-id-token": requestToken } });
-      const result = await response.json() as { session?: ClassroomSession | null };
-      if (response.ok) setClassroomSession(result.session ?? null);
+      const result = await response.json() as { session?: ClassroomSession | null; activity?: ClassroomActivity | null };
+      if (response.ok) { setClassroomSession(result.session ?? null); setClassroomActivity(result.activity ?? null); }
     } catch { /* The next poll will retry quietly. */ }
+  }
+
+  async function updateClassroomActivity(action: "working" | "needs_help" | "complete") {
+    const requestToken = await campusIdentityToken();
+    if (!requestToken) return;
+    setClassroomActivityBusy(true);
+    try {
+      const response = await fetch("/api/session", { method: "POST", headers: { "content-type": "application/json", "privy-id-token": requestToken }, body: JSON.stringify({ action }) });
+      const result = await response.json() as { activity?: ClassroomActivity; error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Quest status could not be updated");
+      setClassroomActivity(result.activity ?? null);
+      notify(action === "complete" ? "Onchain proof verified — quest complete" : action === "needs_help" ? "Your educator can now see that you need help" : "You are marked as working on the quest");
+    } catch (error) { notify(error instanceof Error ? error.message : "Quest status could not be updated"); }
+    finally { setClassroomActivityBusy(false); }
   }
 
   async function loadEducatorDashboard() {
@@ -2108,13 +2133,14 @@ export default function OnchainLab() {
         <div className="content-area">
           {classroomSession && active !== "admin" && <section className="live-class-quest">
             <span className="live-pulse">LIVE</span>
-            <div><small>CLASSROOM QUEST FROM YOUR EDUCATOR</small><h3>{classroomSession.title}</h3><p>{classroomSession.instructions}</p></div>
-            <button onClick={() => {
+            <div><small>CLASSROOM QUEST FROM YOUR EDUCATOR</small><h3>{classroomSession.title}</h3><p>{classroomSession.instructions}</p>{classroomActivity?.proofLabel && <em>✓ {classroomActivity.proofLabel}</em>}</div>
+            <div className="live-quest-actions"><button onClick={() => {
               if (classroomSession.quest === "fund_wallets" || classroomSession.quest === "send_token") setActive("wallet");
               else if (classroomSession.quest === "mint_nft") { setMarketArea("nfts"); setActive("market"); }
               else if (classroomSession.quest === "buy_rwa") { setMarketArea("rwas"); setActive("market"); }
               else setActive("mask");
-            }}>Start quest →</button>
+              void updateClassroomActivity("working");
+            }}>{classroomActivity?.status === "working" ? "Continue quest →" : "Start quest →"}</button>{classroomActivity?.status !== "completed" && <><button className="quest-proof" onClick={() => updateClassroomActivity("complete")} disabled={classroomActivityBusy}>Verify my proof</button><button className="quest-help" onClick={() => updateClassroomActivity("needs_help")} disabled={classroomActivityBusy}>I need help</button></>}</div>
           </section>}
           {active === "home" && (
             <div className="dashboard-grid">
@@ -2498,11 +2524,11 @@ export default function OnchainLab() {
                 <article><small>ONCHAIN ACTIONS</small><strong>{educatorDashboard?.metrics.onchainActions ?? 0}</strong><span>real testnet proofs</span></article>
               </div>
               <section className="session-control card">
-                <div className="session-control-head"><div><span className="eyebrow">SESSION MODE</span><h3>{educatorDashboard?.currentSession ? educatorDashboard.currentSession.title : "Push one quest to every student"}</h3><p>{educatorDashboard?.currentSession ? educatorDashboard.currentSession.instructions : "Students see the quest at the top of Campus OS within 15 seconds."}</p></div>{educatorDashboard?.currentSession && <div className="session-score"><strong>{educatorDashboard.sessionProgress}</strong><span>of {educatorDashboard.metrics.activeStudents} completed</span></div>}</div>
+                <div className="session-control-head"><div><span className="eyebrow">SESSION MODE</span><h3>{educatorDashboard?.currentSession ? educatorDashboard.currentSession.title : "Push one quest to every student"}</h3><p>{educatorDashboard?.currentSession ? educatorDashboard.currentSession.instructions : "Students see the quest at the top of Campus OS within 15 seconds."}</p></div>{educatorDashboard?.currentSession && <div className="session-score"><strong>{educatorDashboard.sessionProgress}</strong><span>of {educatorDashboard.metrics.activeStudents} verified</span></div>}</div>
                 {!educatorDashboard?.currentSession ? <>
                   <div className="quest-picker">{(["fund_wallets", "send_token", "mint_nft", "buy_rwa", "launch_token"] as ClassroomQuest[]).map((quest) => <button key={quest} className={sessionDraft.quest === quest ? "active" : ""} onClick={() => chooseSessionQuest(quest)}>{({ fund_wallets: "Fund wallets", send_token: "Send tokens", mint_nft: "Mint NFT", buy_rwa: "Buy RWA", launch_token: "Launch token" } as Record<ClassroomQuest, string>)[quest]}</button>)}</div>
                   <div className="session-form"><label>Quest title<input value={sessionDraft.title} onChange={(event) => setSessionDraft((current) => ({ ...current, title: event.target.value }))} /></label><label>Instructions<textarea value={sessionDraft.instructions} onChange={(event) => setSessionDraft((current) => ({ ...current, instructions: event.target.value }))} /></label><button onClick={() => updateClassroomSession("start_session")} disabled={educatorBusy}>Go live for the class →</button></div>
-                </> : <div className="session-live-actions"><span><i /> LIVE NOW · updates every 15 seconds</span><button onClick={() => updateClassroomSession("end_session")} disabled={educatorBusy}>End session</button></div>}
+                </> : <><div className="live-session-breakdown"><span><b>{educatorDashboard.sessionProgress}</b> Completed</span><span><b>{educatorDashboard.sessionWorking}</b> Working</span><span><b>{educatorDashboard.sessionNeedsHelp}</b> Need help</span><span><b>{Math.max(0, educatorDashboard.metrics.activeStudents - educatorDashboard.sessionProgress - educatorDashboard.sessionWorking - educatorDashboard.sessionNeedsHelp)}</b> Not started</span></div><div className="session-live-actions"><span><i /> LIVE NOW · updates every 15 seconds</span><button onClick={() => updateClassroomSession("end_session")} disabled={educatorBusy}>End session</button></div></>}
               </section>
               <div className="educator-ops-grid">
                 <section className="card network-health"><div className="section-head"><span><b>NETWORK + ASSET HEALTH</b><small>What is ready for today’s class</small></span></div><div>{[
@@ -2512,7 +2538,7 @@ export default function OnchainLab() {
                 ].map(([label, value]) => <p key={label}><span>{label}</span><b>{value}</b></p>)}</div></section>
                 <section className="card classroom-alerts"><div className="section-head"><span><b>NEEDS HELP</b><small>Start here when you walk around the room</small></span><em>{educatorDashboard?.alerts.length ?? 0}</em></div>{educatorDashboard?.alerts.length ? educatorDashboard.alerts.slice(0, 8).map((alert) => <p key={`${alert.userId}:${alert.message}`}><b>@{alert.username}</b><span>{alert.message}</span></p>) : <div className="all-clear">✓ No student blockers detected</div>}</section>
               </div>
-              <section className="admin-table card roster-table"><div className="section-head"><span><b>LIVE STUDENT ROSTER</b><small>Wallet, learning and building readiness</small></span><button onClick={loadEducatorDashboard}>Refresh</button></div><div className="table-row table-head"><span>Student</span><span>Wallets</span><span>Lessons</span><span>Built</span><span>Status</span></div>{educatorDashboard?.roster.map((student) => <div className="table-row" key={student.id}><span data-label="Student"><b>{student.displayName}</b><small>@{student.username}</small></span><span data-label="Wallets">{student.ethereumReady ? "ETH ✓" : "ETH —"} · {student.solanaReady ? "SOL ✓" : "SOL —"}</span><span data-label="Lessons">{student.lessonsCompleted} / 25</span><span data-label="Built">{student.assetsCreated} assets</span><span data-label="Status" className={`status ${student.issues.length ? "review" : ""}`}>{student.issues.length ? "Needs help" : "Ready"}</span></div>)}</section>
+              <section className="admin-table card roster-table"><div className="section-head"><span><b>LIVE STUDENT ROSTER</b><small>Wallet, learning and live-quest readiness</small></span><button onClick={loadEducatorDashboard}>Refresh</button></div><div className="table-row table-head"><span>Student</span><span>Wallets</span><span>Lessons</span><span>Built</span><span>{educatorDashboard?.currentSession ? "Live quest" : "Status"}</span></div>{educatorDashboard?.roster.map((student) => { const statusLabel = student.sessionStatus === "completed" ? "Completed ✓" : student.sessionStatus === "working" ? "Working" : student.sessionStatus === "needs_help" ? "Needs help" : educatorDashboard.currentSession ? "Not started" : student.issues.length ? "Needs help" : "Ready"; return <div className="table-row" key={student.id}><span data-label="Student"><b>{student.displayName}</b><small>@{student.username}</small></span><span data-label="Wallets">{student.ethereumReady ? "ETH ✓" : "ETH —"} · {student.solanaReady ? "SOL ✓" : "SOL —"}</span><span data-label="Lessons">{student.lessonsCompleted} / 25</span><span data-label="Built">{student.assetsCreated} assets</span><span data-label="Status" title={student.proofLabel ?? undefined} className={`status ${student.sessionStatus === "needs_help" || (!student.sessionStatus && student.issues.length) ? "review" : student.sessionStatus === "working" ? "working" : student.sessionStatus === "completed" ? "complete" : ""}`}>{statusLabel}</span></div>; })}</section>
               <section className="faucet-admin card">
                 <div className="faucet-admin-head"><div><span className="eyebrow">CAMPUS FAUCET CONTROL</span><h3>Fund once. Let verified students claim.</h3><p>The distributor wallets are testnet-only and managed by Privy. Campus OS stores no wallet private keys.</p></div><button onClick={prepareFaucetWallets} disabled={faucetBusy === "prepare" || faucetState?.chains.every((item) => item.configured)}>{faucetBusy === "prepare" ? "Preparing…" : faucetState?.chains.every((item) => item.configured) ? "Wallets prepared ✓" : "Prepare both wallets"}</button></div>
                 <div className="faucet-admin-grid">

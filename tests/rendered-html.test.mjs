@@ -133,4 +133,9 @@ test("educator command centre uses live cohort data and broadcasts classroom que
   assert.match(sessionRoute, /Tokenised asset holding verified/);
   assert.match(client, /Verify my proof/);
   assert.match(client, /I need help/);
+  assert.match(client, /Download class CSV/);
+  assert.match(client, /SESSION REPORTS/);
+  assert.match(client, /VERIFIED CLASSROOM PROOFS/);
+  assert.match(dashboardRoute, /recentSessions/);
+  assert.match(sessionRoute, /proofs/);
 });

@@ -11,13 +11,13 @@ const quests: Quest[] = ["fund_wallets", "send_token", "mint_nft", "buy_rwa", "l
 
 async function snapshot(request: Request) {
   const { db } = await requireOwner(request);
-  const [studentRows, walletRows, lessonRows, claimRows, launchRows, tokenRows, transferRows, purchaseRows, holdingRows, rwaRows, airdropRows, airdropClaimRows, queueRows, liveRows, activityRows] = await Promise.all([
+  const [studentRows, walletRows, lessonRows, claimRows, launchRows, tokenRows, transferRows, purchaseRows, holdingRows, rwaRows, airdropRows, airdropClaimRows, queueRows, sessionRows, activityRows] = await Promise.all([
     db.select().from(users).where(eq(users.status, "active")).orderBy(desc(users.createdAt)),
     db.select().from(wallets), db.select().from(lessonProgress), db.select().from(faucetClaims),
     db.select().from(testnetLaunches), db.select().from(testnetTokens), db.select().from(tokenTransfers),
     db.select().from(marketPurchases), db.select().from(rwaHoldings), db.select().from(rwaAssets),
     db.select().from(tokenAirdrops), db.select().from(tokenAirdropClaims), db.select().from(campusTransactionQueues),
-    db.select().from(classroomSessions).where(eq(classroomSessions.status, "live")).orderBy(desc(classroomSessions.startedAt)).limit(1),
+    db.select().from(classroomSessions).orderBy(desc(classroomSessions.startedAt)),
     db.select().from(classroomSessionActivity),
   ]);
   const students = studentRows.filter((row) => row.role !== "owner");
@@ -45,7 +45,7 @@ async function snapshot(request: Request) {
       proofLabel: null as string | null,
     };
   });
-  const currentSession = liveRows[0] ?? null;
+  const currentSession = sessionRows.find((row) => row.status === "live") ?? null;
   if (currentSession) roster.forEach((student) => {
     const activity = activityRows.find((row) => row.sessionId === currentSession.id && row.userId === student.id);
     student.sessionStatus = activity?.status ?? null;
@@ -63,6 +63,10 @@ async function snapshot(request: Request) {
     ...(student.sessionStatus === "needs_help" ? [{ userId: student.id, username: student.username, message: "Asked for help with the live quest" }] : []),
   ]);
   const sentClaims = claimRows.filter((row) => row.status === "sent");
+  const recentSessions = sessionRows.filter((row) => row.status === "ended").slice(0, 8).map((session) => {
+    const records = activityRows.filter((row) => row.sessionId === session.id);
+    return { id: session.id, title: session.title, quest: session.quest, startedAt: session.startedAt, endedAt: session.endedAt, completed: records.filter((row) => row.status === "completed").length, participated: records.length, needsHelp: records.filter((row) => row.status === "needs_help").length };
+  });
   return {
     metrics: {
       activeStudents: roster.length,
@@ -78,6 +82,7 @@ async function snapshot(request: Request) {
     sessionProgress: currentSession ? roster.filter((student) => student.sessionStatus === "completed").length : sessionProgress,
     sessionWorking: currentSession ? roster.filter((student) => student.sessionStatus === "working").length : 0,
     sessionNeedsHelp: currentSession ? roster.filter((student) => student.sessionStatus === "needs_help").length : 0,
+    recentSessions,
   };
 }
 

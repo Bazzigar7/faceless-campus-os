@@ -199,6 +199,7 @@ type RwaState = { balanceCredits: number; holdings: RwaHolding[]; trades: RwaTra
 type ClassroomQuest = "fund_wallets" | "send_token" | "mint_nft" | "buy_rwa" | "launch_token";
 type ClassroomSession = { id: string; title: string; quest: ClassroomQuest; instructions: string; status: "live" | "ended"; startedAt: string };
 type ClassroomActivity = { status: "working" | "needs_help" | "completed"; proofLabel: string | null };
+type ClassroomProof = { id: string; title: string; quest: ClassroomQuest; proofLabel: string; completedAt: string };
 type EducatorDashboard = {
   metrics: { activeStudents: number; bothWallets: number; lessonsCompleted: number; onchainActions: number; nftCollections: number; tokens: number; rwas: number; openAirdrops: number };
   roster: Array<{ id: string; username: string; displayName: string; email: string; ethereumReady: boolean; solanaReady: boolean; lessonsCompleted: number; ethFunded: boolean; solFunded: boolean; assetsCreated: number; issues: string[]; sessionStatus: ClassroomActivity["status"] | null; proofLabel: string | null }>;
@@ -208,6 +209,7 @@ type EducatorDashboard = {
   sessionProgress: number;
   sessionWorking: number;
   sessionNeedsHelp: number;
+  recentSessions: Array<{ id: string; title: string; quest: ClassroomQuest; startedAt: string; endedAt: string | null; completed: number; participated: number; needsHelp: number }>;
 };
 
 type Drop = {
@@ -459,6 +461,7 @@ export default function OnchainLab() {
   const [learningBusy, setLearningBusy] = useState(false);
   const [classroomSession, setClassroomSession] = useState<ClassroomSession | null>(null);
   const [classroomActivity, setClassroomActivity] = useState<ClassroomActivity | null>(null);
+  const [classroomProofs, setClassroomProofs] = useState<ClassroomProof[]>([]);
   const [classroomActivityBusy, setClassroomActivityBusy] = useState(false);
   const [educatorDashboard, setEducatorDashboard] = useState<EducatorDashboard | null>(null);
   const [educatorBusy, setEducatorBusy] = useState(false);
@@ -639,8 +642,8 @@ export default function OnchainLab() {
     if (!requestToken) return;
     try {
       const response = await fetch("/api/session", { headers: { "privy-id-token": requestToken } });
-      const result = await response.json() as { session?: ClassroomSession | null; activity?: ClassroomActivity | null };
-      if (response.ok) { setClassroomSession(result.session ?? null); setClassroomActivity(result.activity ?? null); }
+      const result = await response.json() as { session?: ClassroomSession | null; activity?: ClassroomActivity | null; proofs?: ClassroomProof[] };
+      if (response.ok) { setClassroomSession(result.session ?? null); setClassroomActivity(result.activity ?? null); setClassroomProofs(result.proofs ?? []); }
     } catch { /* The next poll will retry quietly. */ }
   }
 
@@ -697,6 +700,17 @@ export default function OnchainLab() {
       launch_token: { title: "Launch a classroom token", instructions: "Ask Mask to prepare a token, review every field, then deploy it on Sepolia or Solana Devnet." },
     };
     setSessionDraft({ quest, ...templates[quest] });
+  }
+
+  function downloadClassReport() {
+    if (!educatorDashboard) return;
+    const escape = (value: string | number | boolean) => `"${String(value).replaceAll('"', '""')}"`;
+    const headings = ["Name", "Username", "Email", "Ethereum wallet", "Solana wallet", "Lessons completed", "Assets created", "Live quest status", "Verified proof", "Issues"];
+    const rows = educatorDashboard.roster.map((student) => [student.displayName, `@${student.username}`, student.email, student.ethereumReady, student.solanaReady, student.lessonsCompleted, student.assetsCreated, student.sessionStatus ?? "not_started", student.proofLabel ?? "", student.issues.join("; ")]);
+    const csv = [headings, ...rows].map((row) => row.map(escape).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a"); link.href = url; link.download = `faceless-campus-report-${new Date().toISOString().slice(0, 10)}.csv`; link.click(); URL.revokeObjectURL(url);
+    notify("Class report downloaded");
   }
 
   async function loadWalletAssets() {
@@ -2494,7 +2508,8 @@ export default function OnchainLab() {
                 <div className="passport-identity"><span className="profile-dot large">{initials}</span><div><span className="eyebrow">FACELESS STUDENT PASSPORT</span><h2>{displayName}</h2><p>Creator · Builder · Cohort 04</p></div></div>
                 <div className="passport-wallet"><small>MULTICHAIN CLASSROOM IDENTITY</small>{campusUsername && <strong>@{campusUsername}</strong>}<strong>{ethWallet}</strong><strong>{solWallet}</strong><span><i /> Sepolia + Solana Devnet ready</span></div>
               </section>
-              <div className="passport-metrics"><article><strong>02</strong><span>Lessons completed</span></article><article><strong>03</strong><span>Onchain actions</span></article><article><strong>{claimedCampaigns.length.toString().padStart(2, "0")}</strong><span>Campaigns joined</span></article><article><strong>{headClaimed ? "03" : "02"}</strong><span>Assets collected</span></article></div>
+              {classroomProofs.length > 0 && <section className="classroom-proof-strip card"><div className="section-head"><span><b>VERIFIED CLASSROOM PROOFS</b><small>Permanent records earned through live Campus quests</small></span><em>{classroomProofs.length}</em></div><div>{classroomProofs.slice(0, 4).map((proof) => <article key={proof.id}><span>✓</span><div><small>{new Date(proof.completedAt).toLocaleDateString()}</small><b>{proof.title}</b><p>{proof.proofLabel}</p></div></article>)}</div></section>}
+              <div className="passport-metrics"><article><strong>{classroomProofs.length.toString().padStart(2, "0")}</strong><span>Verified quests</span></article><article><strong>{completed.toString().padStart(2, "0")}</strong><span>Lessons completed</span></article><article><strong>{claimedCampaigns.length.toString().padStart(2, "0")}</strong><span>Campaigns joined</span></article><article><strong>{headClaimed ? "03" : "02"}</strong><span>Assets collected</span></article></div>
               <div className="passport-layout">
                 <section className="card passport-timeline"><div className="section-head"><span><b>PROOF OF PROGRESS</b><small>Learning, building and creating in one record</small></span></div>{[
                   ["Ethereum foundations", "Completed the introductory lesson and knowledge check", "LEARN"],
@@ -2516,7 +2531,7 @@ export default function OnchainLab() {
 
           {active === "admin" && (
             <div className="page-stack">
-              <section className="admin-banner educator-hero"><div><span className="eyebrow">EDUCATOR COMMAND CENTRE</span><h2>{educatorDashboard?.currentSession ? "Your classroom is live." : "Ready for the next session."}</h2><p>See who is ready, spot students who are stuck, and send one guided onchain quest to the whole class.</p></div><button onClick={loadEducatorDashboard} disabled={educatorBusy}>{educatorBusy ? "Refreshing…" : "Refresh classroom"}</button></section>
+              <section className="admin-banner educator-hero"><div><span className="eyebrow">EDUCATOR COMMAND CENTRE</span><h2>{educatorDashboard?.currentSession ? "Your classroom is live." : "Ready for the next session."}</h2><p>See who is ready, spot students who are stuck, and send one guided onchain quest to the whole class.</p></div><div className="admin-hero-actions"><button onClick={downloadClassReport}>Download class CSV</button><button onClick={loadEducatorDashboard} disabled={educatorBusy}>{educatorBusy ? "Refreshing…" : "Refresh classroom"}</button></div></section>
               <div className="command-metrics">
                 <article><small>ACTIVE STUDENTS</small><strong>{educatorDashboard?.metrics.activeStudents ?? 0}</strong><span>verified profiles</span></article>
                 <article><small>BOTH WALLETS READY</small><strong>{educatorDashboard?.metrics.bothWallets ?? 0}</strong><span>Ethereum + Solana</span></article>
@@ -2539,6 +2554,7 @@ export default function OnchainLab() {
                 <section className="card classroom-alerts"><div className="section-head"><span><b>NEEDS HELP</b><small>Start here when you walk around the room</small></span><em>{educatorDashboard?.alerts.length ?? 0}</em></div>{educatorDashboard?.alerts.length ? educatorDashboard.alerts.slice(0, 8).map((alert) => <p key={`${alert.userId}:${alert.message}`}><b>@{alert.username}</b><span>{alert.message}</span></p>) : <div className="all-clear">✓ No student blockers detected</div>}</section>
               </div>
               <section className="admin-table card roster-table"><div className="section-head"><span><b>LIVE STUDENT ROSTER</b><small>Wallet, learning and live-quest readiness</small></span><button onClick={loadEducatorDashboard}>Refresh</button></div><div className="table-row table-head"><span>Student</span><span>Wallets</span><span>Lessons</span><span>Built</span><span>{educatorDashboard?.currentSession ? "Live quest" : "Status"}</span></div>{educatorDashboard?.roster.map((student) => { const statusLabel = student.sessionStatus === "completed" ? "Completed ✓" : student.sessionStatus === "working" ? "Working" : student.sessionStatus === "needs_help" ? "Needs help" : educatorDashboard.currentSession ? "Not started" : student.issues.length ? "Needs help" : "Ready"; return <div className="table-row" key={student.id}><span data-label="Student"><b>{student.displayName}</b><small>@{student.username}</small></span><span data-label="Wallets">{student.ethereumReady ? "ETH ✓" : "ETH —"} · {student.solanaReady ? "SOL ✓" : "SOL —"}</span><span data-label="Lessons">{student.lessonsCompleted} / 25</span><span data-label="Built">{student.assetsCreated} assets</span><span data-label="Status" title={student.proofLabel ?? undefined} className={`status ${student.sessionStatus === "needs_help" || (!student.sessionStatus && student.issues.length) ? "review" : student.sessionStatus === "working" ? "working" : student.sessionStatus === "completed" ? "complete" : ""}`}>{statusLabel}</span></div>; })}</section>
+              {Boolean(educatorDashboard?.recentSessions.length) && <section className="session-history card"><div className="section-head"><span><b>SESSION REPORTS</b><small>Saved automatically when you end a class quest</small></span></div><div>{educatorDashboard?.recentSessions.map((session) => <article key={session.id}><span>{({ fund_wallets: "Ξ", send_token: "↗", mint_nft: "◆", buy_rwa: "▦", launch_token: "+" } as Record<ClassroomQuest, string>)[session.quest]}</span><div><small>{new Date(session.startedAt).toLocaleString()}</small><b>{session.title}</b><p>{session.participated} participated · {session.completed} verified · {session.needsHelp} needed help</p></div><em>{session.participated ? Math.round((session.completed / session.participated) * 100) : 0}%</em></article>)}</div></section>}
               <section className="faucet-admin card">
                 <div className="faucet-admin-head"><div><span className="eyebrow">CAMPUS FAUCET CONTROL</span><h3>Fund once. Let verified students claim.</h3><p>The distributor wallets are testnet-only and managed by Privy. Campus OS stores no wallet private keys.</p></div><button onClick={prepareFaucetWallets} disabled={faucetBusy === "prepare" || faucetState?.chains.every((item) => item.configured)}>{faucetBusy === "prepare" ? "Preparing…" : faucetState?.chains.every((item) => item.configured) ? "Wallets prepared ✓" : "Prepare both wallets"}</button></div>
                 <div className="faucet-admin-grid">

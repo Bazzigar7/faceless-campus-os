@@ -5,12 +5,20 @@ import { faucetError, requireCampusUser } from "../../../lib/faucet-auth";
 export async function GET(request: Request) {
   try {
     const { db, student } = await requireCampusUser(request);
+    const [allSessions, ownActivity] = await Promise.all([
+      db.select().from(classroomSessions).orderBy(desc(classroomSessions.startedAt)),
+      db.select().from(classroomSessionActivity).where(eq(classroomSessionActivity.userId, student.id)).orderBy(desc(classroomSessionActivity.updatedAt)),
+    ]);
     const [session] = await db.select().from(classroomSessions)
       .where(eq(classroomSessions.status, "live"))
       .orderBy(desc(classroomSessions.startedAt)).limit(1);
-    if (!session) return Response.json({ session: null, activity: null });
+    const proofs = ownActivity.filter((row) => row.status === "completed").slice(0, 12).map((row) => {
+      const source = allSessions.find((item) => item.id === row.sessionId);
+      return { id: row.id, title: source?.title ?? "Classroom quest", quest: source?.quest ?? "fund_wallets", proofLabel: row.proofLabel ?? "Verified Campus activity", completedAt: row.completedAt ?? row.updatedAt };
+    });
+    if (!session) return Response.json({ session: null, activity: null, proofs });
     const [activity] = await db.select().from(classroomSessionActivity).where(and(eq(classroomSessionActivity.sessionId, session.id), eq(classroomSessionActivity.userId, student.id))).limit(1);
-    return Response.json({ session, activity: activity ?? null });
+    return Response.json({ session, activity: activity ?? null, proofs });
   } catch (error) {
     return faucetError(error);
   }

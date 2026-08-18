@@ -112,3 +112,20 @@ test("RWA lab persists student case studies and keeps them fictional", async () 
   assert.match(schema, /idx_rwa_assets_symbol/);
   assert.match(schema, /idx_rwa_distributions_asset_user_period/);
 });
+
+test("educator command centre uses live cohort data and broadcasts classroom quests", async () => {
+  const [client, dashboardRoute, sessionRoute, schema] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/admin/dashboard/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/session/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /EDUCATOR COMMAND CENTRE/);
+  assert.match(client, /Go live for the class/);
+  assert.match(client, /CLASSROOM QUEST FROM YOUR EDUCATOR/);
+  assert.match(dashboardRoute, /requireOwner/);
+  assert.match(dashboardRoute, /sessionProgress/);
+  assert.match(dashboardRoute, /action === "start_session"/);
+  assert.match(sessionRoute, /requireCampusUser/);
+  assert.match(schema, /classroom_sessions/);
+});

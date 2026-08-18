@@ -61,6 +61,19 @@ export const educatorPermissions = sqliteTable("educator_permissions", {
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+export const classroomSessions = sqliteTable("classroom_sessions", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  quest: text("quest", { enum: ["fund_wallets", "send_token", "mint_nft", "buy_rwa", "launch_token"] }).notNull(),
+  instructions: text("instructions").notNull(),
+  status: text("status", { enum: ["live", "ended"] }).notNull().default("live"),
+  openedBy: text("opened_by").notNull().references(() => users.id),
+  startedAt: text("started_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  endedAt: text("ended_at"),
+}, (table) => [
+  index("idx_classroom_sessions_status_time").on(table.status, table.startedAt),
+]);
+
 export const faucetClaims = sqliteTable("faucet_claims", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

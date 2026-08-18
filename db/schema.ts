@@ -220,6 +220,41 @@ export const tokenTransfers = sqliteTable("token_transfers", {
   index("idx_token_transfers_to_time").on(table.toUserId, table.createdAt),
 ]);
 
+export const tokenAirdrops = sqliteTable("token_airdrops", {
+  id: text("id").primaryKey(),
+  tokenId: text("token_id").notNull().references(() => testnetTokens.id, { onDelete: "cascade" }),
+  creatorUserId: text("creator_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  amountPerClaim: text("amount_per_claim").notNull(),
+  maxClaims: integer("max_claims").notNull(),
+  totalAllocation: text("total_allocation").notNull(),
+  distributorAddress: text("distributor_address").notNull(),
+  fundingTransactionHash: text("funding_transaction_hash"),
+  status: text("status", { enum: ["draft", "open", "closed", "exhausted"] }).notNull().default("draft"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_token_airdrops_token_status").on(table.tokenId, table.status),
+  index("idx_token_airdrops_creator_time").on(table.creatorUserId, table.createdAt),
+  uniqueIndex("idx_token_airdrops_funding_tx").on(table.fundingTransactionHash),
+]);
+
+export const tokenAirdropClaims = sqliteTable("token_airdrop_claims", {
+  id: text("id").primaryKey(),
+  airdropId: text("airdrop_id").notNull().references(() => tokenAirdrops.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  walletAddress: text("wallet_address").notNull(),
+  amount: text("amount").notNull(),
+  transactionHash: text("transaction_hash"),
+  status: text("status", { enum: ["queued", "processing", "sent", "failed"] }).notNull().default("queued"),
+  errorMessage: text("error_message"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_token_airdrop_claims_airdrop_user").on(table.airdropId, table.userId),
+  uniqueIndex("idx_token_airdrop_claims_tx").on(table.transactionHash),
+  index("idx_token_airdrop_claims_status_time").on(table.status, table.createdAt),
+]);
+
 export const rwaHoldings = sqliteTable("rwa_holdings", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

@@ -116,6 +116,20 @@ type CampusToken = {
   holders: number;
   transferCount: number;
 };
+type TokenAirdrop = {
+  id: string;
+  tokenId: string;
+  amountPerClaim: string;
+  maxClaims: number;
+  totalAllocation: string;
+  distributorAddress?: string;
+  fundingTransactionHash: string | null;
+  status: "draft" | "open" | "closed" | "exhausted";
+  isCreator: boolean;
+  claimedCount: number;
+  pendingCount: number;
+  ownClaim: { status: "queued" | "processing" | "sent" | "failed"; transactionHash?: string | null; errorMessage?: string | null } | null;
+};
 type WalletAssetView = "all" | "tokens" | "nfts";
 type UsdPrices = { ethereum: number; solana: number; updatedAt: number };
 type WalletNft = {
@@ -392,6 +406,11 @@ export default function OnchainLab() {
   const [tokenAmount, setTokenAmount] = useState("");
   const [tokenBusy, setTokenBusy] = useState(false);
   const [tokenError, setTokenError] = useState("");
+  const [tokenDetailTab, setTokenDetailTab] = useState<"exchange" | "airdrop">("exchange");
+  const [tokenAirdrops, setTokenAirdrops] = useState<TokenAirdrop[]>([]);
+  const [airdropAmount, setAirdropAmount] = useState("");
+  const [airdropBusy, setAirdropBusy] = useState(false);
+  const [airdropError, setAirdropError] = useState("");
   const [transactionQueue, setTransactionQueue] = useState<{ position: number; seconds: number } | null>(null);
   const [marketArea, setMarketArea] = useState<"nfts" | "tokens" | "rwas">("nfts");
   const [rwaState, setRwaState] = useState<RwaState | null>(null);
@@ -447,6 +466,8 @@ export default function OnchainLab() {
   });
   const selectedMarket = marketCollections.find((collection) => collection.id === selectedMarketId) ?? null;
   const selectedToken = campusTokens.find((token) => token.id === selectedTokenId) ?? null;
+  const selectedAirdrop = tokenAirdrops.find((airdrop) => airdrop.tokenId === selectedTokenId && (airdrop.status === "draft" || airdrop.status === "open"))
+    ?? tokenAirdrops.find((airdrop) => airdrop.tokenId === selectedTokenId) ?? null;
 
   useEffect(() => {
     identityTokenRef.current = identityToken;
@@ -566,16 +587,20 @@ export default function OnchainLab() {
     setWalletAssetsLoading(true);
     setWalletAssetsError("");
     try {
-      const [response, tokenResponse] = await Promise.all([
+      const [response, tokenResponse, airdropResponse] = await Promise.all([
         fetch("/api/launch", { headers: { "privy-id-token": identityToken } }),
         fetch("/api/tokens", { headers: { "privy-id-token": identityToken } }),
+        fetch("/api/airdrops", { headers: { "privy-id-token": identityToken } }),
       ]);
       const result = await response.json() as { nfts?: WalletNft[]; resumableLaunch?: ResumableLaunch | null; error?: string };
       const tokenResult = await tokenResponse.json() as { tokens?: CampusToken[]; error?: string };
+      const airdropResult = await airdropResponse.json() as { airdrops?: TokenAirdrop[]; error?: string };
       if (!response.ok) throw new Error(result.error ?? "Wallet assets are unavailable");
       if (!tokenResponse.ok) throw new Error(tokenResult.error ?? "Campus tokens are unavailable");
+      if (!airdropResponse.ok) throw new Error(airdropResult.error ?? "Token airdrops are unavailable");
       setWalletNfts(result.nfts ?? []);
       setCampusTokens(tokenResult.tokens ?? []);
+      setTokenAirdrops(airdropResult.airdrops ?? []);
       if (result.resumableLaunch && !launchDeployment) {
         const pending = result.resumableLaunch;
         setLaunchDraft({
@@ -621,9 +646,14 @@ export default function OnchainLab() {
       setMarketCollections(result.collections ?? []);
       const requestToken = await campusIdentityToken();
       if (requestToken) {
-        const tokenResponse = await fetch("/api/tokens", { headers: { "privy-id-token": requestToken } });
+        const [tokenResponse, airdropResponse] = await Promise.all([
+          fetch("/api/tokens", { headers: { "privy-id-token": requestToken } }),
+          fetch("/api/airdrops", { headers: { "privy-id-token": requestToken } }),
+        ]);
         const tokenResult = await tokenResponse.json() as { tokens?: CampusToken[]; error?: string };
+        const airdropResult = await airdropResponse.json() as { airdrops?: TokenAirdrop[] };
         if (tokenResponse.ok) setCampusTokens(tokenResult.tokens ?? []);
+        if (airdropResponse.ok) setTokenAirdrops(airdropResult.airdrops ?? []);
       }
     } catch (error) {
       setMarketError(error instanceof Error ? error.message : "Campus Market is unavailable");
@@ -1191,6 +1221,120 @@ export default function OnchainLab() {
       setTokenError(error instanceof Error ? error.message : "The token transfer was not completed");
     } finally {
       setTokenBusy(false);
+    }
+  }
+
+  async function createTokenAirdrop(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedToken) return;
+    if (!/^\d+$/.test(airdropAmount) || BigInt(airdropAmount) < 1n) return setAirdropError("Enter at least 1 whole token per student");
+    setAirdropBusy(true);
+    setAirdropError("");
+    try {
+      const requestToken = await campusIdentityToken();
+      if (!requestToken) throw new Error("Your Campus session expired. Refresh and try again.");
+      const response = await fetch("/api/airdrops", {
+        method: "POST",
+        headers: { "content-type": "application/json", "privy-id-token": requestToken },
+        body: JSON.stringify({ action: "create", tokenId: selectedToken.id, amountPerClaim: airdropAmount }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "The airdrop could not be prepared");
+      await loadWalletAssets();
+      notify("Classroom airdrop prepared. Fund the vault once to open claims.");
+    } catch (error) {
+      setAirdropError(error instanceof Error ? error.message : "The airdrop could not be prepared");
+    } finally {
+      setAirdropBusy(false);
+    }
+  }
+
+  async function fundTokenAirdrop() {
+    if (!selectedToken || !selectedAirdrop?.distributorAddress || selectedAirdrop.status !== "draft") return;
+    setAirdropBusy(true);
+    setAirdropError("");
+    try {
+      const amount = BigInt(selectedAirdrop.totalAllocation);
+      let transactionHash = "";
+      let fromAddress = "";
+      if (selectedToken.chain === "ethereum") {
+        if (!ethereumWallet) throw new Error("Your Campus Ethereum wallet is unavailable");
+        fromAddress = ethereumWallet.address;
+        await ethereumWallet.switchChain(11155111);
+        const data = encodeFunctionData({
+          abi: campusTokenTransferAbi,
+          functionName: "transfer",
+          args: [selectedAirdrop.distributorAddress as Hex, amount * (10n ** BigInt(selectedToken.decimals))],
+        });
+        const { hash } = await sendEthereumTransaction({ to: selectedToken.tokenAddress as Hex, data, chainId: 11155111 }, { address: ethereumWallet.address, uiOptions: { showWalletUIs: true } });
+        const receipt = await sepoliaPublicClient.waitForTransactionReceipt({ hash: hash as Hex });
+        if (receipt.status !== "success") throw new Error("Sepolia rejected the vault funding transaction");
+        transactionHash = hash;
+      } else {
+        if (!solanaWallet) throw new Error("Your Campus Solana wallet is unavailable");
+        fromAddress = solanaWallet.address;
+        await waitForCampusSolanaTurn();
+        const owner = createNoopSigner(address(solanaWallet.address));
+        const mint = address(selectedToken.tokenAddress);
+        const distributor = address(selectedAirdrop.distributorAddress);
+        const [source] = await findAssociatedTokenPda({ owner: owner.address, mint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+        const [destination] = await findAssociatedTokenPda({ owner: distributor, mint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+        const { value: latestBlockhash } = await solanaDevnetRpc.getLatestBlockhash().send();
+        const transaction = pipe(
+          createTransactionMessage({ version: 0 }),
+          (tx) => setTransactionMessageFeePayer(owner.address, tx),
+          (tx) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, tx),
+          (tx) => appendTransactionMessageInstructions([
+            getCreateAssociatedTokenIdempotentInstruction({ payer: owner, ata: destination, owner: distributor, mint }),
+            getTransferCheckedInstruction({ source, mint, destination, authority: owner, amount: amount * (10n ** BigInt(selectedToken.decimals)), decimals: selectedToken.decimals }),
+          ], tx),
+          (tx) => compileTransaction(tx),
+          (tx) => new Uint8Array(getTransactionEncoder().encode(tx)),
+        );
+        const { signature } = await sendCampusSolanaTransaction(transaction);
+        transactionHash = getBase58Decoder().decode(signature);
+        await waitForSolanaConfirmation(transactionHash);
+      }
+      const requestToken = await campusIdentityToken();
+      if (!requestToken) throw new Error("The vault was funded onchain, but your Campus session expired. Refresh before trying anything else.");
+      const response = await fetch("/api/airdrops", {
+        method: "POST",
+        headers: { "content-type": "application/json", "privy-id-token": requestToken },
+        body: JSON.stringify({ action: "record_funding", airdropId: selectedAirdrop.id, transactionHash, fromAddress }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "The vault was funded, but Campus could not open claims");
+      setAirdropAmount("");
+      await loadWalletAssets();
+      notify(`${selectedToken.symbol} claims are now open to verified students`);
+    } catch (error) {
+      setAirdropError(error instanceof Error ? error.message : "The airdrop vault was not funded");
+    } finally {
+      setAirdropBusy(false);
+    }
+  }
+
+  async function claimTokenAirdrop() {
+    if (!selectedToken || !selectedAirdrop || selectedAirdrop.status !== "open") return;
+    setAirdropBusy(true);
+    setAirdropError("");
+    try {
+      if (selectedToken.chain === "solana") await waitForCampusSolanaTurn();
+      const requestToken = await campusIdentityToken();
+      if (!requestToken) throw new Error("Your Campus session expired. Refresh and try again.");
+      const response = await fetch("/api/airdrops", {
+        method: "POST",
+        headers: { "content-type": "application/json", "privy-id-token": requestToken },
+        body: JSON.stringify({ action: "claim", airdropId: selectedAirdrop.id }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "The token claim could not be completed");
+      await loadWalletAssets();
+      notify(`${selectedAirdrop.amountPerClaim} ${selectedToken.symbol} claimed to your Campus wallet`);
+    } catch (error) {
+      setAirdropError(error instanceof Error ? error.message : "The token claim could not be completed");
+    } finally {
+      setAirdropBusy(false);
     }
   }
 
@@ -2118,7 +2262,27 @@ export default function OnchainLab() {
               </>}
               {marketArea === "tokens" && <div className="token-market-stack">
                 <section className="token-market-intro card"><div><span className="eyebrow">LIVE TOKEN LAB · SEPOLIA + SOLANA DEVNET</span><h2>Launch a token.<br />Move its economy.</h2><p>Every token here was wallet-approved by a Campus student. Holders can exchange whole test tokens directly by username and inspect the on-chain receipt.</p></div><button onClick={() => setActive("mask")}>Launch with Mask →</button></section>
-                {selectedToken && <section className="token-exchange card"><div className="token-exchange-identity"><span className={`token-symbol-orb ${selectedToken.chain}`}>{selectedToken.symbol.slice(0, 3)}</span><div><small>{selectedToken.standard.toUpperCase()} · {selectedToken.chain === "ethereum" ? "SEPOLIA" : "SOLANA DEVNET"}</small><h3>{selectedToken.name}</h3><p>{selectedToken.description}</p></div><button onClick={() => { setSelectedTokenId(null); setTokenError(""); }} aria-label="Close token exchange">×</button></div><div className="token-exchange-facts"><span><small>YOUR BALANCE</small><b>{Number(selectedToken.owned).toLocaleString()} {selectedToken.symbol}</b></span><span><small>TOTAL SUPPLY</small><b>{Number(selectedToken.totalSupply).toLocaleString()}</b></span><span><small>HOLDERS</small><b>{selectedToken.holders}</b></span><span><small>AUTHORITY</small><b>{selectedToken.authorityMode === "revoke" ? "Fixed" : "Creator kept"}</b></span></div>{BigInt(selectedToken.owned) > 0n ? <form className="token-send-form" onSubmit={sendCampusToken}><label>Send to Campus username<div><span>@</span><input value={tokenRecipient} onChange={(event) => { setTokenRecipient(event.target.value); setTokenError(""); }} placeholder="classmate" /></div></label><label>Whole tokens<input inputMode="numeric" value={tokenAmount} onChange={(event) => { setTokenAmount(event.target.value.replace(/\D/g, "")); setTokenError(""); }} placeholder="100" /></label><button disabled={tokenBusy || !tokenRecipient || !tokenAmount}>{tokenBusy ? "Waiting for wallet…" : `Send ${selectedToken.symbol} →`}</button></form> : <div className="token-no-balance">Ask @{selectedToken.creator.username} or another holder to send you some {selectedToken.symbol} by Campus username.</div>}{tokenError && <div className="market-message error">{tokenError}</div>}<div className="token-proof"><span>Created by @{selectedToken.creator.username}</span><a href={selectedToken.chain === "ethereum" ? `https://sepolia.etherscan.io/token/${selectedToken.tokenAddress}` : `https://explorer.solana.com/address/${selectedToken.tokenAddress}?cluster=devnet`} target="_blank" rel="noreferrer">View token onchain ↗</a></div></section>}
+                {selectedToken && <section className="token-exchange card">
+                  <div className="token-exchange-identity"><span className={`token-symbol-orb ${selectedToken.chain}`}>{selectedToken.symbol.slice(0, 3)}</span><div><small>{selectedToken.standard.toUpperCase()} · {selectedToken.chain === "ethereum" ? "SEPOLIA" : "SOLANA DEVNET"}</small><h3>{selectedToken.name}</h3><p>{selectedToken.description}</p></div><button onClick={() => { setSelectedTokenId(null); setTokenError(""); setAirdropError(""); }} aria-label="Close token exchange">×</button></div>
+                  <div className="token-exchange-facts"><span><small>YOUR BALANCE</small><b>{Number(selectedToken.owned).toLocaleString()} {selectedToken.symbol}</b></span><span><small>TOTAL SUPPLY</small><b>{Number(selectedToken.totalSupply).toLocaleString()}</b></span><span><small>HOLDERS</small><b>{selectedToken.holders}</b></span><span><small>AUTHORITY</small><b>{selectedToken.authorityMode === "revoke" ? "Fixed" : "Creator kept"}</b></span></div>
+                  <div className="token-action-tabs"><button className={tokenDetailTab === "exchange" ? "active" : ""} onClick={() => setTokenDetailTab("exchange")}>Send tokens</button><button className={tokenDetailTab === "airdrop" ? "active" : ""} onClick={() => setTokenDetailTab("airdrop")}>Classroom airdrop {selectedAirdrop?.status === "open" ? "· LIVE" : ""}</button></div>
+                  {tokenDetailTab === "exchange" ? <>
+                    {BigInt(selectedToken.owned) > 0n ? <form className="token-send-form" onSubmit={sendCampusToken}><label>Send to Campus username<div><span>@</span><input value={tokenRecipient} onChange={(event) => { setTokenRecipient(event.target.value); setTokenError(""); }} placeholder="classmate" /></div></label><label>Whole tokens<input inputMode="numeric" value={tokenAmount} onChange={(event) => { setTokenAmount(event.target.value.replace(/\D/g, "")); setTokenError(""); }} placeholder="100" /></label><button disabled={tokenBusy || !tokenRecipient || !tokenAmount}>{tokenBusy ? "Waiting for wallet…" : `Send ${selectedToken.symbol} →`}</button></form> : <div className="token-no-balance">Ask @{selectedToken.creator.username} or another holder to send you some {selectedToken.symbol} by Campus username.</div>}
+                    {tokenError && <div className="market-message error">{tokenError}</div>}
+                  </> : <div className="token-airdrop-panel">
+                    {!selectedAirdrop && selectedToken.creator.username === campusUsername && <form onSubmit={createTokenAirdrop}><div><small>ONE CLAIM PER VERIFIED STUDENT</small><h4>Open a cohort-wide airdrop</h4><p>Choose how many whole {selectedToken.symbol} each active student can claim. Campus calculates the cohort total before your wallet approves anything.</p></div><label>Tokens per student<input inputMode="numeric" value={airdropAmount} onChange={(event) => { setAirdropAmount(event.target.value.replace(/\D/g, "")); setAirdropError(""); }} placeholder="100" /></label><button disabled={airdropBusy || !airdropAmount}>{airdropBusy ? "Preparing…" : "Prepare airdrop →"}</button></form>}
+                    {!selectedAirdrop && selectedToken.creator.username !== campusUsername && <div className="token-no-balance">@{selectedToken.creator.username} has not opened a classroom airdrop for this token yet.</div>}
+                    {selectedAirdrop && <div className="airdrop-campaign"><div className="airdrop-campaign-head"><div><small>{selectedAirdrop.status === "draft" ? "READY TO FUND" : selectedAirdrop.status === "open" ? "CLAIMS OPEN" : "AIRDROP COMPLETE"}</small><h4>{selectedAirdrop.amountPerClaim} {selectedToken.symbol} per student</h4><p>Verified Campus accounts claim once. Shared college Wi-Fi does not decide eligibility.</p></div><b>{selectedAirdrop.claimedCount}/{selectedAirdrop.maxClaims}<small> claimed</small></b></div><div className="airdrop-progress"><i style={{ width: `${Math.round((selectedAirdrop.claimedCount / Math.max(selectedAirdrop.maxClaims, 1)) * 100)}%` }} /></div>
+                      {selectedAirdrop.isCreator && selectedAirdrop.status === "draft" && <div className="airdrop-fund"><span><small>TOTAL VAULT FUNDING</small><b>{Number(selectedAirdrop.totalAllocation).toLocaleString()} {selectedToken.symbol}</b><em>One wallet approval opens {selectedAirdrop.maxClaims} student claims.</em></span><button onClick={fundTokenAirdrop} disabled={airdropBusy}>{airdropBusy ? "Waiting for wallet…" : "Fund vault & open claims →"}</button></div>}
+                      {!selectedAirdrop.isCreator && selectedAirdrop.status === "open" && !selectedAirdrop.ownClaim && <button className="airdrop-claim" onClick={claimTokenAirdrop} disabled={airdropBusy}>{airdropBusy ? (transactionQueue ? `Campus queue · ${transactionQueue.seconds}s` : "Sending to your wallet…") : `Claim ${selectedAirdrop.amountPerClaim} ${selectedToken.symbol} →`}</button>}
+                      {!selectedAirdrop.isCreator && selectedAirdrop.status === "open" && selectedAirdrop.ownClaim?.status === "failed" && <div className="airdrop-retry"><span>{selectedAirdrop.ownClaim.errorMessage || "The network did not complete your claim."}</span><button onClick={claimTokenAirdrop} disabled={airdropBusy}>{airdropBusy ? "Retrying…" : "Retry claim →"}</button></div>}
+                      {!selectedAirdrop.isCreator && selectedAirdrop.ownClaim?.status === "sent" && <div className="airdrop-claimed"><b>Claimed ✓</b><span>{selectedAirdrop.amountPerClaim} {selectedToken.symbol} is in your Campus wallet.</span><a href={selectedToken.chain === "ethereum" ? `https://sepolia.etherscan.io/tx/${selectedAirdrop.ownClaim.transactionHash}` : `https://explorer.solana.com/tx/${selectedAirdrop.ownClaim.transactionHash}?cluster=devnet`} target="_blank" rel="noreferrer">View receipt ↗</a></div>}
+                      {selectedAirdrop.isCreator && selectedAirdrop.status !== "draft" && <div className="airdrop-creator-stats"><span><small>CLAIMED</small><b>{selectedAirdrop.claimedCount}</b></span><span><small>PENDING</small><b>{selectedAirdrop.pendingCount}</b></span><span><small>REMAINING</small><b>{Math.max(selectedAirdrop.maxClaims - selectedAirdrop.claimedCount, 0)}</b></span></div>}
+                    </div>}
+                    {airdropError && <div className="market-message error">{airdropError}</div>}
+                  </div>}
+                  <div className="token-proof"><span>Created by @{selectedToken.creator.username}</span><a href={selectedToken.chain === "ethereum" ? `https://sepolia.etherscan.io/token/${selectedToken.tokenAddress}` : `https://explorer.solana.com/address/${selectedToken.tokenAddress}?cluster=devnet`} target="_blank" rel="noreferrer">View token onchain ↗</a></div>
+                </section>}
                 {campusTokens.length ? <div className="token-live-grid">{campusTokens.map((token) => <article className="token-live-card card" key={token.id}><button onClick={() => { setSelectedTokenId(token.id); setTokenRecipient(""); setTokenAmount(""); setTokenError(""); window.scrollTo({ top: 0, behavior: "smooth" }); }}><span className={`token-symbol-orb ${token.chain}`}>{token.symbol.slice(0, 3)}</span><div><small>{token.chain === "ethereum" ? "ETHEREUM · SEPOLIA" : "SOLANA · DEVNET"}</small><h3>{token.name}</h3><b>{token.symbol}</b><p>{token.purpose}</p></div><div className="token-live-stats"><span><small>SUPPLY</small><b>{Number(token.totalSupply).toLocaleString()}</b></span><span><small>YOU OWN</small><b>{Number(token.owned).toLocaleString()}</b></span><span><small>MOVES</small><b>{token.transferCount}</b></span></div><em>{BigInt(token.owned) > 0n ? "Send or inspect →" : "Inspect token →"}</em></button></article>)}</div> : <div className="market-message"><b>No student tokens are live yet.</b><span>Ask Mask to prepare the first Sepolia or Solana Devnet token.</span></div>}
                 <div className="token-flow-grid">
                   {[{ n: "01", title: "Design", copy: "Choose purpose, supply, decimals and mint authority." }, { n: "02", title: "Deploy", copy: "Approve the real testnet creation in your Campus wallet." }, { n: "03", title: "Distribute", copy: "Send test tokens by username with an on-chain receipt." }, { n: "04", title: "Add liquidity", copy: "The next lab will create a pool and explain pricing and slippage." }].map((item) => <article className="card" key={item.n}><span>{item.n}</span><h3>{item.title}</h3><p>{item.copy}</p></article>)}

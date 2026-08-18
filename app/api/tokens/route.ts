@@ -2,8 +2,9 @@ import { and, desc, eq } from "drizzle-orm";
 import { createPublicClient, decodeFunctionData, encodeDeployData, http, isAddress, type Hex } from "viem";
 import { sepolia } from "viem/chains";
 import tokenArtifact from "../../../contracts/artifacts/CampusToken.json";
-import { testnetTokens, tokenTransfers, users, wallets } from "../../../db/schema";
+import { testnetTokens, tokenAirdropClaims, tokenAirdrops, tokenTransfers, users, wallets } from "../../../db/schema";
 import { faucetError, requireCampusUser } from "../../../lib/faucet-auth";
+import { campusTokenBalances } from "../../../lib/token-ledger";
 
 const sepoliaClient = createPublicClient({ chain: sepolia, transport: http() });
 const solanaAddressPattern = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -13,29 +14,20 @@ function clean(value: unknown, max: number) {
   return String(value || "").trim().slice(0, max);
 }
 
-function tokenBalances(token: { id: string; userId: string; totalSupply: string }, transfers: Array<{ tokenId: string; fromUserId: string; toUserId: string; amount: string }>) {
-  const balances = new Map<string, bigint>([[token.userId, BigInt(token.totalSupply)]]);
-  for (const transfer of transfers) {
-    if (transfer.tokenId !== token.id) continue;
-    const amount = BigInt(transfer.amount);
-    balances.set(transfer.fromUserId, (balances.get(transfer.fromUserId) ?? 0n) - amount);
-    balances.set(transfer.toUserId, (balances.get(transfer.toUserId) ?? 0n) + amount);
-  }
-  return balances;
-}
-
 export async function GET(request: Request) {
   try {
     const { db, student } = await requireCampusUser(request);
-    const [rows, transfers] = await Promise.all([
+    const [rows, transfers, airdrops, claims] = await Promise.all([
       db.select({ token: testnetTokens, creatorUsername: users.username, creatorName: users.displayName })
         .from(testnetTokens).innerJoin(users, eq(testnetTokens.userId, users.id))
         .where(eq(testnetTokens.status, "deployed")).orderBy(desc(testnetTokens.updatedAt)),
       db.select().from(tokenTransfers).orderBy(desc(tokenTransfers.createdAt)),
+      db.select().from(tokenAirdrops),
+      db.select().from(tokenAirdropClaims),
     ]);
     return Response.json({
       tokens: rows.map(({ token, creatorUsername, creatorName }) => {
-        const balances = tokenBalances(token, transfers);
+        const balances = campusTokenBalances(token, transfers, airdrops, claims);
         return {
           ...token,
           creator: { username: creatorUsername, displayName: creatorName },
@@ -119,8 +111,12 @@ export async function POST(request: Request) {
       if (!recipient || recipient.id === student.id) return Response.json({ error: "Choose another active Campus username" }, { status: 400 });
       const amountText = clean(body.amount, 20);
       if (!/^\d+$/.test(amountText) || BigInt(amountText) < 1n) return Response.json({ error: "Send at least 1 whole token" }, { status: 400 });
-      const transfers = await db.select().from(tokenTransfers).where(eq(tokenTransfers.tokenId, token.id));
-      const owned = tokenBalances(token, transfers).get(student.id) ?? 0n;
+      const [transfers, airdrops, claims] = await Promise.all([
+        db.select().from(tokenTransfers).where(eq(tokenTransfers.tokenId, token.id)),
+        db.select().from(tokenAirdrops).where(eq(tokenAirdrops.tokenId, token.id)),
+        db.select().from(tokenAirdropClaims),
+      ]);
+      const owned = campusTokenBalances(token, transfers, airdrops, claims).get(student.id) ?? 0n;
       if (BigInt(amountText) > owned) return Response.json({ error: `You have ${owned.toString()} ${token.symbol}` }, { status: 400 });
       const fromAddress = clean(body.fromAddress, 64);
       const toAddress = clean(body.toAddress, 64);

@@ -72,3 +72,19 @@ test("token launch and peer exchange stay wallet-approved on both testnets", asy
   assert.match(tokenContract, /mintAuthorityActive/);
   assert.match(tokenContract, /revokeMintAuthority/);
 });
+
+test("token airdrops use a secure vault and one verified claim per student", async () => {
+  const [client, route, signer, schema] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/airdrops/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/privy-server-wallet.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /fundTokenAirdrop/);
+  assert.match(client, /claimTokenAirdrop/);
+  assert.match(client, /waitForCampusSolanaTurn/);
+  assert.match(route, /record_funding/);
+  assert.match(route, /sendTokenAirdropTransfer/);
+  assert.match(signer, /privy-idempotency-key/);
+  assert.match(schema, /idx_token_airdrop_claims_airdrop_user/);
+});

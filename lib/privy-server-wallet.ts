@@ -11,6 +11,7 @@ import {
   setTransactionMessageLifetimeUsingBlockhash,
 } from "@solana/kit";
 import { getTransferSolInstruction } from "@solana-program/system";
+import { TOKEN_PROGRAM_ADDRESS, findAssociatedTokenPda, getCreateAssociatedTokenIdempotentInstruction, getTransferCheckedInstruction } from "@solana-program/token";
 import type { CampusChain } from "./wallet-provider";
 
 type PrivyWallet = { id: string; address: string; chain_type: CampusChain };
@@ -126,4 +127,69 @@ export async function sendFaucetTransfer(input: {
     return sendEthereum(input.walletId, input.destination, input.amount, input.claimId);
   }
   return sendSolana(input.walletId, input.distributorAddress, input.destination, input.amount, input.claimId);
+}
+
+export async function sendTokenAirdropTransfer(input: {
+  chain: CampusChain;
+  walletId: string;
+  distributorAddress: string;
+  tokenAddress: string;
+  destination: string;
+  amount: string;
+  decimals: number;
+  claimId: string;
+}) {
+  const units = decimalToBaseUnits(input.amount, 0) * (10n ** BigInt(input.decimals));
+  if (input.chain === "ethereum") {
+    const destinationWord = input.destination.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+    const amountWord = units.toString(16).padStart(64, "0");
+    const response = await fetch(`https://api.privy.io/v1/wallets/${encodeURIComponent(input.walletId)}/rpc`, {
+      method: "POST",
+      headers: headers(input.claimId),
+      body: JSON.stringify({
+        method: "eth_sendTransaction",
+        caip2: "eip155:11155111",
+        chain_type: "ethereum",
+        reference_id: input.claimId,
+        params: { transaction: { to: input.tokenAddress, data: `0xa9059cbb${destinationWord}${amountWord}` } },
+      }),
+    });
+    const result = await readPrivyResponse<PrivyRpcResponse>(response);
+    if (!result.data?.hash) throw new Error("Sepolia token claim did not return a hash");
+    return result.data.hash;
+  }
+
+  const rpc = createSolanaRpc(process.env.SOLANA_DEVNET_RPC_URL || "https://api.devnet.solana.com");
+  const distributor = createNoopSigner(address(input.distributorAddress));
+  const mint = address(input.tokenAddress);
+  const owner = address(input.destination);
+  const [source] = await findAssociatedTokenPda({ owner: distributor.address, mint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+  const [destination] = await findAssociatedTokenPda({ owner, mint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+  const { value: latestBlockhash } = await rpc.getLatestBlockhash().send();
+  const transaction = pipe(
+    createTransactionMessage({ version: 0 }),
+    (tx) => setTransactionMessageFeePayer(distributor.address, tx),
+    (tx) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, tx),
+    (tx) => appendTransactionMessageInstructions([
+      getCreateAssociatedTokenIdempotentInstruction({ payer: distributor, ata: destination, owner, mint }),
+      getTransferCheckedInstruction({ source, mint, destination, authority: distributor, amount: units, decimals: input.decimals }),
+    ], tx),
+    (tx) => compileTransaction(tx),
+    (tx) => new Uint8Array(getTransactionEncoder().encode(tx)),
+  );
+  let binary = "";
+  for (const byte of transaction) binary += String.fromCharCode(byte);
+  const response = await fetch(`https://api.privy.io/v1/wallets/${encodeURIComponent(input.walletId)}/rpc`, {
+    method: "POST",
+    headers: headers(input.claimId),
+    body: JSON.stringify({
+      method: "signAndSendTransaction",
+      caip2: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+      reference_id: input.claimId,
+      params: { transaction: btoa(binary), encoding: "base64" },
+    }),
+  });
+  const result = await readPrivyResponse<PrivyRpcResponse>(response);
+  if (!result.data?.hash) throw new Error("Solana token claim did not return a signature");
+  return result.data.hash;
 }

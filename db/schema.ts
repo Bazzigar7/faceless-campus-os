@@ -349,14 +349,27 @@ export const rwaTrades = sqliteTable("rwa_trades", {
 export const campaigns = sqliteTable("campaigns", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
+  brand: text("brand").notNull().default("Faceless Partner"),
   brief: text("brief").notNull(),
   campaignType: text("campaign_type", { enum: ["creator", "faceless", "clipper", "user_acquisition"] }).notNull(),
+  platform: text("platform").notNull().default("Instagram"),
+  spots: integer("spots").notNull().default(50),
   rewardAmount: text("reward_amount").notNull(),
   rewardCurrency: text("reward_currency").notNull(),
   status: text("status", { enum: ["draft", "live", "paused", "complete"] }).notNull().default("draft"),
   createdBy: text("created_by").notNull().references(() => users.id),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [index("idx_campaigns_status_created").on(table.status, table.createdAt)]);
+
+export const campaignEnrollments = sqliteTable("campaign_enrollments", {
+  id: text("id").primaryKey(),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  joinedAt: text("joined_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_campaign_enrollments_campaign_user").on(table.campaignId, table.userId),
+  index("idx_campaign_enrollments_user_time").on(table.userId, table.joinedAt),
+]);
 
 export const campaignSubmissions = sqliteTable("campaign_submissions", {
   id: text("id").primaryKey(),
@@ -369,6 +382,7 @@ export const campaignSubmissions = sqliteTable("campaign_submissions", {
   submittedAt: text("submitted_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   reviewedAt: text("reviewed_at"),
 }, (table) => [
+  uniqueIndex("idx_submissions_campaign_user").on(table.campaignId, table.userId),
   index("idx_submissions_campaign_status").on(table.campaignId, table.status),
   index("idx_submissions_user_time").on(table.userId, table.submittedAt),
 ]);

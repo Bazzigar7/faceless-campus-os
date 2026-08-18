@@ -139,3 +139,18 @@ test("educator command centre uses live cohort data and broadcasts classroom que
   assert.match(dashboardRoute, /recentSessions/);
   assert.match(sessionRoute, /proofs/);
 });
+
+test("campaign engine persists missions, submissions and owner payment approval", async () => {
+  const [client, route, schema] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/campaigns/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /CAMPAIGN CONTROL/);
+  assert.match(client, /Submit work/);
+  assert.match(client, /Approve payment/);
+  assert.match(route, /approved_for_payment/);
+  assert.match(route, /Paste a valid public content link/);
+  assert.match(schema, /campaign_enrollments/);
+  assert.match(schema, /idx_submissions_campaign_user/);
+});

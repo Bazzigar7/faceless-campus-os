@@ -360,3 +360,22 @@ test("Campus Showcase exposes only verified cohort builds with one-student appla
   assert.match(schema, /idx_builder_project_reactions_project_user_kind/);
   assert.match(schema, /featured_at/);
 });
+
+test("Campus Inbox combines private actions and persists per-student read state", async () => {
+  const [client, route, schema] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/notifications/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /CAMPUS INBOX/);
+  assert.match(client, /What needs your attention/);
+  assert.match(client, /Mark all read/);
+  assert.match(client, /Private to your verified Campus account/);
+  assert.match(route, /eq\(notificationReads\.userId, student\.id\)/);
+  assert.match(route, /eq\(cohortAssignments\.cohortId, cohortId\)/);
+  assert.match(route, /builder-invite:/);
+  assert.match(route, /approved_for_payment/);
+  assert.match(route, /student\.role === "owner"/);
+  assert.match(schema, /notification_reads/);
+  assert.match(schema, /idx_notification_reads_user_key/);
+});

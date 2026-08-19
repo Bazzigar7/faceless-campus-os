@@ -222,6 +222,8 @@ type BuilderReviewProject = BuilderProject & { student: { username: string; disp
 type BuilderProjectState = { role: "student" | "educator" | "owner"; projects: BuilderProject[]; reviewQueue: BuilderReviewProject[] };
 type ShowcaseProject = { id: string; title: string; chain: BuilderProject["chain"]; useCase: string; problem: string; audience: string; solution: string; demoUrl: string | null; contractReference: string | null; featured: boolean; featuredAt: string | null; verifiedAt: string | null; applauseCount: number; applauded: boolean; team: Array<{ id: string; username: string; displayName: string; role: string }> };
 type ShowcaseState = { role: "student" | "educator" | "owner"; projects: ShowcaseProject[] };
+type CampusNotification = { key: string; kind: "assignment" | "invitation" | "review" | "campaign" | "drop" | "owner"; title: string; body: string; destination: "learn" | "create" | "tools" | "campaigns" | "drops" | "admin"; createdAt: string; referenceId?: string; read: boolean };
+type NotificationState = { role: "student" | "educator" | "owner"; unreadCount: number; notifications: CampusNotification[] };
 type CohortRosterStudent = { id: string; username: string; displayName: string; email: string; joinedAt: string; ethereumAddress: string; solanaAddress: string; lessonsCompleted: number };
 type CohortAssignment = { id: string; cohortId: string; course: Course; lessonId: number; title: string; instructions: string; dueAt: string | null; status: "active" | "archived"; completedCount?: number; totalStudents?: number };
 type CampusCohort = { id: string; title: string; college: string; joinCode: string | null; expectedStudents: number; enrollmentOpen: boolean; status: "draft" | "active" | "complete"; memberCount: number; roster: CohortRosterStudent[]; assignments: CohortAssignment[] };
@@ -434,6 +436,9 @@ export default function OnchainLab() {
   const [buildArea, setBuildArea] = useState<"ideas" | "studio" | "nft" | "showcase">("ideas");
   const [showcaseState, setShowcaseState] = useState<ShowcaseState | null>(null);
   const [showcaseBusyId, setShowcaseBusyId] = useState<string | null>(null);
+  const [notificationState, setNotificationState] = useState<NotificationState | null>(null);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [notificationBusy, setNotificationBusy] = useState(false);
   const [builderReviewNotes, setBuilderReviewNotes] = useState<Record<string, string>>({});
   const [builderInvite, setBuilderInvite] = useState({ username: "", role: "Developer" });
   const [builderDraft, setBuilderDraft] = useState<{ id: string; title: string; chain: BuilderProject["chain"]; useCase: string; problem: string; audience: string; solution: string; milestones: BuilderMilestone[]; contractReference: string; demoUrl: string }>({ id: "", title: "", chain: "ethereum", useCase: "NFTs & digital ownership", problem: "", audience: "", solution: "", milestones: ["Map the user flow", "Build the first working demo", "Test with a classmate", "Add testnet or demo proof"].map((label) => ({ label, done: false })), contractReference: "", demoUrl: "" });
@@ -614,6 +619,7 @@ export default function OnchainLab() {
     void loadCreatorProjects();
     void loadBuilderProjects();
     void loadShowcase();
+    void loadNotifications();
     void loadCohorts();
     void loadAttendance();
     void loadPassport();
@@ -802,6 +808,24 @@ export default function OnchainLab() {
     const requestToken = await campusIdentityToken(); if (!requestToken) return;
     setShowcaseBusyId(projectId);
     try { const response = await fetch("/api/showcase", { method: "POST", headers: { "content-type": "application/json", "privy-id-token": requestToken }, body: JSON.stringify({ action, projectId }) }); const result = await response.json() as ShowcaseState & { error?: string }; if (!response.ok) throw new Error(result.error ?? "Showcase could not be updated"); setShowcaseState(result); notify(action === "applaud" ? "Campus applause updated" : action === "feature" ? "Project featured for demo day" : "Project removed from the featured row"); } catch (error) { notify(error instanceof Error ? error.message : "Showcase could not be updated"); } finally { setShowcaseBusyId(null); }
+  }
+
+  async function loadNotifications() {
+    const requestToken = await campusIdentityToken(); if (!requestToken) return;
+    try { const response = await fetch("/api/notifications", { headers: { "privy-id-token": requestToken } }); const result = await response.json() as NotificationState & { error?: string }; if (!response.ok) throw new Error(result.error ?? "Campus Inbox is unavailable"); setNotificationState(result); } catch { /* Inbox retries when opened. */ }
+  }
+
+  async function notificationAction(action: "mark" | "mark_all", key?: string) {
+    const requestToken = await campusIdentityToken(); if (!requestToken) return;
+    setNotificationBusy(true);
+    try { const response = await fetch("/api/notifications", { method: "POST", headers: { "content-type": "application/json", "privy-id-token": requestToken }, body: JSON.stringify({ action, key }) }); const result = await response.json() as NotificationState & { error?: string }; if (!response.ok) throw new Error(result.error ?? "Campus Inbox could not be updated"); setNotificationState(result); } catch (error) { notify(error instanceof Error ? error.message : "Campus Inbox could not be updated"); } finally { setNotificationBusy(false); }
+  }
+
+  function openNotification(notification: CampusNotification) {
+    if (!notification.read) void notificationAction("mark", notification.key);
+    if (notification.destination === "create") setBuildArea("studio");
+    setActive(notification.destination);
+    setNotificationOpen(false);
   }
 
   function openBuilderProject(project?: BuilderProject) {
@@ -2370,9 +2394,12 @@ export default function OnchainLab() {
           </div>
           <div className="top-actions">
             <div className="chain-switch" aria-label="Active test network"><button className={activeChain === "ethereum" ? "active" : ""} onClick={() => setActiveChain("ethereum")}><i /> ETH · SEPOLIA</button><button className={activeChain === "solana" ? "active sol" : "sol"} onClick={() => setActiveChain("solana")}><i /> SOL · DEVNET</button></div>
+            <button className={notificationOpen ? "inbox-button active" : "inbox-button"} aria-label={`Campus Inbox${notificationState?.unreadCount ? `, ${notificationState.unreadCount} unread` : ""}`} onClick={() => { setNotificationOpen((open) => !open); void loadNotifications(); }}><span>◌</span>{Boolean(notificationState?.unreadCount) && <b>{Math.min(99, notificationState?.unreadCount ?? 0)}</b>}</button>
             <button className="wallet-pill" onClick={() => setActive("wallet")}><span>◇</span> {wallet}</button>
           </div>
         </header>
+
+        {notificationOpen && <><button className="inbox-scrim" aria-label="Close Campus Inbox" onClick={() => setNotificationOpen(false)} /><aside className="campus-inbox" aria-label="Campus Inbox"><header><div><span className="eyebrow">CAMPUS INBOX</span><h2>What needs your attention.</h2><p>Assignments, invitations, feedback and opportunities—together in one calm place.</p></div><button aria-label="Close Campus Inbox" onClick={() => setNotificationOpen(false)}>×</button></header><div className="inbox-toolbar"><span><b>{notificationState?.unreadCount ?? 0}</b> unread</span><button disabled={notificationBusy || !notificationState?.unreadCount} onClick={() => void notificationAction("mark_all")}>Mark all read</button></div><div className="inbox-list">{notificationState?.notifications.length ? notificationState.notifications.map((notification) => <button key={notification.key} className={notification.read ? "inbox-item read" : "inbox-item"} onClick={() => openNotification(notification)}><i>{notification.kind === "assignment" ? "L" : notification.kind === "invitation" ? "+" : notification.kind === "review" ? "✓" : notification.kind === "campaign" ? "₹" : notification.kind === "drop" ? "◆" : "!"}</i><span><small>{notification.kind.replaceAll("_", " ")} · {new Date(notification.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</small><b>{notification.title}</b><p>{notification.body}</p><em>Open {notification.destination === "create" ? "Project Studio" : notification.destination === "tools" ? "Creator Tools" : notification.destination === "admin" ? "Educator View" : notification.destination} →</em></span>{!notification.read && <u aria-label="Unread" />}</button>) : <div className="inbox-empty"><span>✓</span><h3>You’re all caught up.</h3><p>New Campus actions will appear here automatically.</p></div>}</div><footer>Private to your verified Campus account · never stores wallet keys</footer></aside></>}
 
         <div className="content-area">
           {classroomSession && active !== "admin" && <section className="live-class-quest">

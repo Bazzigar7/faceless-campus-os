@@ -204,6 +204,13 @@
       "when": 1787165633699,
       "tag": "0028_overconfident_jigsaw",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1787166395671,
+      "tag": "0029_easy_silver_samurai",
+      "breakpoints": true
     }
   ]
 }

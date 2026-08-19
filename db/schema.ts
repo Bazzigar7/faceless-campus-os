@@ -519,6 +519,16 @@ export const builderProjectReactions = sqliteTable("builder_project_reactions", 
   index("idx_builder_project_reactions_project_time").on(table.projectId, table.createdAt),
 ]);
 
+export const notificationReads = sqliteTable("notification_reads", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  notificationKey: text("notification_key").notNull(),
+  readAt: text("read_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_notification_reads_user_key").on(table.userId, table.notificationKey),
+  index("idx_notification_reads_user_time").on(table.userId, table.readAt),
+]);
+
 export const payouts = sqliteTable("payouts", {
   id: text("id").primaryKey(),
   submissionId: text("submission_id").notNull().references(() => campaignSubmissions.id, { onDelete: "cascade" }),

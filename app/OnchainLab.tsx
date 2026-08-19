@@ -208,6 +208,9 @@ type CampaignState = { role: "student" | "educator" | "owner"; campaigns: Campus
 type PartnerReward = { kind: "credential" | "token_airdrop" | "nft_mint"; id: string | null; tokenId: string | null; label: string; chain: Chain | null; status: string };
 type PartnerDrop = { id: string; title: string; host: string; description: string; rewardLabel: string; rewardKind: PartnerReward["kind"]; rewardAssetId: string | null; reward: PartnerReward | null; eligibility: "open" | "live_quest" | "lesson" | "campaign"; maxClaims: number; status: "draft" | "live" | "closed"; claimedCount: number; ownClaim: { id: string; evidence: string; claimedAt: string } | null };
 type DropState = { role: "student" | "educator" | "owner"; drops: PartnerDrop[]; credentials: Array<{ id: string; evidence: string; claimedAt: string; drop: PartnerDrop | null }>; rewardOptions: { tokenAirdrops: Array<{ id: string; label: string; tokenId: string; chain: Chain }>; collections: Array<{ id: string; label: string; chain: Chain }> } };
+type LeagueBreakdown = { lessons: number; liveQuests: number; faucetClaims: number; tokenTransfers: number; nftMints: number; tokenLaunches: number; rwaTrades: number; campaigns: number; partnerDrops: number; airdrops: number };
+type LeaguePlayer = { id: string; username: string; displayName: string; xp: number; rank: number; level: number; name: string; nextAt: number; badges: string[]; breakdown: LeagueBreakdown };
+type LeagueState = { own: Omit<LeaguePlayer, "id" | "username" | "displayName" | "rank"> & { rank: number | null }; leaderboard: LeaguePlayer[]; missions: Array<{ id: string; title: string; xp: number; done: boolean; destination: Tab }>; scoring: Record<string, number> };
 type EducatorDashboard = {
   metrics: { activeStudents: number; bothWallets: number; lessonsCompleted: number; onchainActions: number; nftCollections: number; tokens: number; rwas: number; openAirdrops: number };
   roster: Array<{ id: string; username: string; displayName: string; email: string; ethereumReady: boolean; solanaReady: boolean; lessonsCompleted: number; ethFunded: boolean; solFunded: boolean; assetsCreated: number; issues: string[]; sessionStatus: ClassroomActivity["status"] | null; proofLabel: string | null }>;
@@ -401,6 +404,8 @@ export default function OnchainLab() {
   const [dropState, setDropState] = useState<DropState | null>(null);
   const [dropBusy, setDropBusy] = useState<string | null>(null);
   const [dropDraft, setDropDraft] = useState({ title: "", host: "", description: "", rewardLabel: "Campus credential", rewardKind: "credential" as PartnerReward["kind"], rewardAssetId: "", eligibility: "live_quest" as PartnerDrop["eligibility"], maxClaims: "200" });
+  const [leagueState, setLeagueState] = useState<LeagueState | null>(null);
+  const [leagueLoading, setLeagueLoading] = useState(false);
   const [artPreview, setArtPreview] = useState<string | null>(null);
   const [selectedCourse, setSelectedCourse] = useState<Course>("ethereum");
   const [selectedLesson, setSelectedLesson] = useState<Lesson>(ethereumLessons[1]);
@@ -558,6 +563,7 @@ export default function OnchainLab() {
     void loadClassroomSession();
     void loadCampaigns();
     void loadDrops();
+    void loadLeague();
   }, [authenticated, identityToken, profileStatus]);
 
   useEffect(() => {
@@ -694,6 +700,12 @@ export default function OnchainLab() {
   async function loadDrops() {
     const requestToken = await campusIdentityToken(); if (!requestToken) return;
     try { const response = await fetch("/api/drops", { headers: { "privy-id-token": requestToken } }); const result = await response.json() as DropState & { error?: string }; if (!response.ok) throw new Error(result.error ?? "Partner drops are unavailable"); setDropState(result); } catch { /* Preview drops remain visible during a brief outage. */ }
+  }
+
+  async function loadLeague() {
+    const requestToken = await campusIdentityToken(); if (!requestToken) return;
+    setLeagueLoading(true);
+    try { const response = await fetch("/api/league", { headers: { "privy-id-token": requestToken } }); const result = await response.json() as LeagueState & { error?: string }; if (!response.ok) throw new Error(result.error ?? "Campus League is unavailable"); setLeagueState(result); } catch (error) { notify(error instanceof Error ? error.message : "Campus League is unavailable"); } finally { setLeagueLoading(false); }
   }
 
   async function partnerDropAction(action: "create" | "claim", payload: Record<string, unknown>) {
@@ -2412,8 +2424,10 @@ export default function OnchainLab() {
 
           {active === "games" && (
             <div className="page-stack">
-              <section className="games-hero"><div><span className="eyebrow">FACELESS TESTNET PLAYGROUND</span><h2>Play the concept.<br />Build the next game.</h2><p>Small games make wallets, transactions and smart contracts feel real. Students can play first, then remix the mechanics into their own projects.</p></div><MaskOrb /></section>
-              <div className="game-grid">{games.map((game) => <article className={`game-card ${game.color}`} key={game.id}><div className="game-art"><span>{String(game.id).padStart(2, "0")}</span><div className="pixel-track"><i /><i /><i /><b /></div><em>{game.status}</em></div><div className="game-copy"><small>{game.chain}</small><h3>{game.title}</h3><p>{game.copy}</p><div><span>WIN: {game.reward}</span><button onClick={() => notify(game.status === "PLAYABLE" ? `${game.title} started in demo mode` : `${game.title} added to your watchlist`)}>{game.status === "PLAYABLE" ? "Play demo →" : "Notify me"}</button></div></div></article>)}</div>
+              <section className="league-hero"><div><span className="eyebrow">FACELESS CAMPUS LEAGUE</span><h2>Learn it. Prove it.<br /><i>Climb the league.</i></h2><p>XP comes only from Campus-verified learning and testnet actions. No self-reported scores and no real-money rewards.</p><button onClick={() => void loadLeague()} disabled={leagueLoading}>{leagueLoading ? "Updating league…" : "Refresh verified XP ↻"}</button></div><aside><MaskOrb compact /><span><small>YOUR VERIFIED XP</small><strong>{leagueState?.own.xp ?? 0}</strong><b>LVL {leagueState?.own.level ?? 1} · {leagueState?.own.name ?? "Wallet Rookie"}</b></span><div><i style={{ width: `${Math.min(100, ((leagueState?.own.xp ?? 0) / (leagueState?.own.nextAt ?? 100)) * 100)}%` }} /></div><small>{leagueState?.own.rank ? `Campus rank #${leagueState.own.rank}` : "Educator view"} · next level at {leagueState?.own.nextAt ?? 100} XP</small></aside></section>
+              <div className="league-layout"><section className="league-board card"><div className="section-head"><span><b>LIVE LEADERBOARD</b><small>Top verified builders in this Campus cohort</small></span><em>{leagueState?.leaderboard.length ?? 0} ranked</em></div><div>{leagueState?.leaderboard.length ? leagueState.leaderboard.slice(0, 12).map((player) => <article key={player.id} className={player.username === campusUsername ? "you" : ""}><strong>{String(player.rank).padStart(2, "0")}</strong><span className="profile-dot">{player.displayName.slice(0, 2).toUpperCase()}</span><div><b>{player.displayName}</b><small>@{player.username} · {player.name}</small></div><em>{player.xp} XP</em></article>) : <p className="league-empty">Verified activity will appear here as students complete Campus quests.</p>}</div></section><section className="league-missions card"><div className="section-head"><span><b>XP MISSIONS</b><small>Every mission checks real Campus proof</small></span></div><div>{leagueState?.missions.map((mission) => <article key={mission.id} className={mission.done ? "done" : ""}><span>{mission.done ? "✓" : "+"}</span><div><b>{mission.title}</b><small>{mission.done ? "Verified on Campus" : `Earn ${mission.xp} XP`}</small></div><button onClick={() => setActive(mission.destination)}>{mission.done ? "View" : "Start →"}</button></article>) ?? <p className="league-empty">Loading your missions…</p>}</div></section></div>
+              <div className="league-badges"><div><span className="eyebrow">YOUR PROOF BADGES</span><h3>Unlocked by actions—not button clicks.</h3></div>{leagueState?.own.badges.length ? <section>{leagueState.own.badges.map((badge) => <span key={badge}>◆ {badge}</span>)}</section> : <p>Complete your first mission to unlock a verified badge.</p>}</div>
+              <div className="game-grid">{games.map((game) => <article className={`game-card ${game.color}`} key={game.id}><div className="game-art"><span>{String(game.id).padStart(2, "0")}</span><div className="pixel-track"><i /><i /><i /><b /></div><em>{game.id < 3 ? "VERIFIED QUEST" : game.status}</em></div><div className="game-copy"><small>{game.chain}</small><h3>{game.title}</h3><p>{game.copy}</p><div><span>PROOF: {game.reward}</span><button onClick={() => game.id === 1 ? setActive("market") : game.id === 2 ? setActive("launchpad") : notify(`${game.title} added to the next game lab`)}>{game.id < 3 ? "Start quest →" : "Notify me"}</button></div></div></article>)}</div>
               <section className="game-builder card"><div><span className="eyebrow">STUDENT GAME LAB</span><h3>Have a game idea?</h3><p>Start from a wallet login, collectible, score or reward mechanic. Mask turns the idea into a build map and suggests whether Ethereum or Solana fits better.</p></div><button onClick={() => setActive("mask")}>Design it with Mask →</button></section>
             </div>
           )}

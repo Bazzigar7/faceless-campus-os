@@ -179,3 +179,19 @@ test("partner drops create verified classroom credentials", async () => {
   assert.match(schema, /reward_kind/);
   assert.match(schema, /idx_partner_drop_claims_drop_user/);
 });
+
+test("Campus League scores only verified learning and testnet activity", async () => {
+  const [client, route] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/league/route.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /FACELESS CAMPUS LEAGUE/);
+  assert.match(client, /LIVE LEADERBOARD/);
+  assert.match(client, /XP MISSIONS/);
+  assert.match(client, /Unlocked by actions—not button clicks/);
+  assert.match(route, /status === "completed"/);
+  assert.match(route, /approved_for_payment/);
+  assert.match(route, /points\.partnerDrop/);
+  assert.match(route, /Math\.min\(breakdown\.tokenTransfers, caps\.transfer\)/);
+  assert.match(client, /No self-reported/);
+});

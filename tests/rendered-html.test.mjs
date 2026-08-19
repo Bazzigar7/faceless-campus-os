@@ -341,3 +341,22 @@ test("Project Studio teams require cohort invitations and share verified credit"
   assert.match(schema, /builder_project_members/);
   assert.match(schema, /idx_builder_project_members_project_user/);
 });
+
+test("Campus Showcase exposes only verified cohort builds with one-student applause", async () => {
+  const [client, route, schema] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/showcase/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /VERIFIED CAMPUS SHOWCASE/);
+  assert.match(client, /Project Studio/);
+  assert.match(client, /NFT Builder/);
+  assert.match(client, /No popularity XP/);
+  assert.match(route, /eq\(builderProjects\.status, "verified"\)/);
+  assert.match(route, /eq\(cohortMembers\.cohortId, membership\.cohortId\)/);
+  assert.match(route, /Only the Campus OS owner can feature demo-day projects/);
+  assert.match(route, /action === "applaud"/);
+  assert.match(schema, /builder_project_reactions/);
+  assert.match(schema, /idx_builder_project_reactions_project_user_kind/);
+  assert.match(schema, /featured_at/);
+});

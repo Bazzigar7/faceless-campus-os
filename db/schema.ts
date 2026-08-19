@@ -485,6 +485,8 @@ export const builderProjects = sqliteTable("builder_projects", {
   reviewNotes: text("review_notes"),
   reviewedBy: text("reviewed_by").references(() => users.id),
   reviewedAt: text("reviewed_at"),
+  featuredBy: text("featured_by").references(() => users.id),
+  featuredAt: text("featured_at"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
@@ -504,6 +506,17 @@ export const builderProjectMembers = sqliteTable("builder_project_members", {
 }, (table) => [
   uniqueIndex("idx_builder_project_members_project_user").on(table.projectId, table.userId),
   index("idx_builder_project_members_user_status").on(table.userId, table.status),
+]);
+
+export const builderProjectReactions = sqliteTable("builder_project_reactions", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().references(() => builderProjects.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  kind: text("kind", { enum: ["applaud"] }).notNull().default("applaud"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_builder_project_reactions_project_user_kind").on(table.projectId, table.userId, table.kind),
+  index("idx_builder_project_reactions_project_time").on(table.projectId, table.createdAt),
 ]);
 
 export const payouts = sqliteTable("payouts", {

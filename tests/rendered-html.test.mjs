@@ -206,8 +206,13 @@ test("creator workspace saves guidance-first shoot plans", async () => {
   assert.match(client, /THE FIVE-SHOT PLAN/);
   assert.match(client, /Instagram Edits/);
   assert.match(client, /JOINED CAMPAIGNS/);
+  assert.match(client, /PRE-SHOOT REVIEW/);
+  assert.match(client, /CREATOR PLAN REVIEW/);
   assert.match(route, /Complete the hook, all five shots and the caption/);
+  assert.match(route, /Mark the complete content plan ready before requesting review/);
+  assert.match(route, /Only the Campus OS owner can review creator plans/);
   assert.match(route, /eq\(creatorProjects\.userId, student\.id\)/);
   assert.match(schema, /creator_projects/);
+  assert.match(schema, /review_status/);
   assert.match(schema, /idx_creator_projects_user_time/);
 });

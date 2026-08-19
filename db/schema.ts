@@ -390,6 +390,7 @@ export const campaignSubmissions = sqliteTable("campaign_submissions", {
 export const creatorProjects = sqliteTable("creator_projects", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
   title: text("title").notNull(),
   platform: text("platform").notNull().default("Instagram Reels"),
   format: text("format", { enum: ["on_camera", "faceless", "voiceover", "hands_only", "screen_recording"] }).notNull().default("faceless"),
@@ -398,6 +399,10 @@ export const creatorProjects = sqliteTable("creator_projects", {
   shots: text("shots").notNull().default("[]"),
   caption: text("caption").notNull().default(""),
   status: text("status", { enum: ["draft", "ready"] }).notNull().default("draft"),
+  reviewStatus: text("review_status", { enum: ["not_requested", "submitted", "changes_requested", "approved"] }).notNull().default("not_requested"),
+  reviewNotes: text("review_notes"),
+  reviewedBy: text("reviewed_by").references(() => users.id),
+  reviewedAt: text("reviewed_at"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [

@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import {
-  builderProjects, campaignSubmissions, classroomSessionActivity, cohortMembers, faucetClaims, lessonProgress, marketPurchases,
+  builderProjectMembers, builderProjects, campaignSubmissions, classroomSessionActivity, cohortMembers, faucetClaims, lessonProgress, marketPurchases,
   partnerDropClaims, rwaTrades, testnetLaunches, testnetTokens, tokenAirdropClaims, tokenTransfers, users,
 } from "../../../db/schema";
 import { faucetError, requireCampusUser } from "../../../lib/faucet-auth";
@@ -19,7 +19,7 @@ function levelFor(xp: number) {
 export async function GET(request: Request) {
   try {
     const { db, student } = await requireCampusUser(request);
-    const [studentRows, memberRows, lessonRows, sessionRows, faucetRows, transferRows, purchaseRows, launchRows, tokenRows, rwaRows, campaignRows, dropRows, airdropRows, projectRows] = await Promise.all([
+    const [studentRows, memberRows, lessonRows, sessionRows, faucetRows, transferRows, purchaseRows, launchRows, tokenRows, rwaRows, campaignRows, dropRows, airdropRows, projectRows, projectMemberRows] = await Promise.all([
       db.select().from(users).where(eq(users.status, "active")),
       db.select().from(cohortMembers),
       db.select().from(lessonProgress),
@@ -34,6 +34,7 @@ export async function GET(request: Request) {
       db.select().from(partnerDropClaims),
       db.select().from(tokenAirdropClaims),
       db.select().from(builderProjects),
+      db.select().from(builderProjectMembers),
     ]);
     const recordFor = (userId: string) => {
       const breakdown = {
@@ -47,7 +48,7 @@ export async function GET(request: Request) {
         campaigns: campaignRows.filter((row) => row.userId === userId && (row.status === "approved_for_payment" || row.status === "paid")).length,
         partnerDrops: dropRows.filter((row) => row.userId === userId).length,
         airdrops: airdropRows.filter((row) => row.userId === userId && row.status === "sent").length,
-        verifiedProjects: projectRows.filter((row) => row.userId === userId && row.status === "verified").length,
+        verifiedProjects: projectRows.filter((row) => row.status === "verified" && (row.userId === userId || projectMemberRows.some((member) => member.projectId === row.id && member.userId === userId && member.status === "accepted"))).length,
       };
       const xp = Math.min(breakdown.lessons, caps.lesson) * points.lesson + Math.min(breakdown.liveQuests, caps.liveQuest) * points.liveQuest + Math.min(breakdown.faucetClaims, caps.faucet) * points.faucet + Math.min(breakdown.tokenTransfers, caps.transfer) * points.transfer + Math.min(breakdown.nftMints, caps.nft) * points.nft + Math.min(breakdown.tokenLaunches, caps.token) * points.token + Math.min(breakdown.rwaTrades, caps.rwa) * points.rwa + Math.min(breakdown.campaigns, caps.campaign) * points.campaign + Math.min(breakdown.partnerDrops, caps.partnerDrop) * points.partnerDrop + Math.min(breakdown.airdrops, caps.airdrop) * points.airdrop + Math.min(breakdown.verifiedProjects, caps.verifiedProject) * points.verifiedProject;
       const badges = [breakdown.lessons >= 1 && "Lesson Starter", breakdown.liveQuests >= 1 && "Live Quest", breakdown.tokenTransfers >= 1 && "Token Sender", breakdown.nftMints >= 1 && "NFT Collector", breakdown.tokenLaunches >= 1 && "Token Launcher", breakdown.rwaTrades >= 1 && "RWA Analyst", breakdown.campaigns >= 1 && "Creator Earned", breakdown.partnerDrops >= 1 && "Partner Proof", breakdown.verifiedProjects >= 1 && "Verified Builder"].filter(Boolean) as string[];

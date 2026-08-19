@@ -1,9 +1,10 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "../db";
 import {
   attendanceRecords,
   attendanceSessions,
   builderProjects,
+  builderProjectMembers,
   campaignSubmissions,
   campaigns,
   classroomSessionActivity,
@@ -25,7 +26,7 @@ const DEFAULT_HEADLINE = "Blockchain learner · Onchain builder · Creator";
 
 export async function getPassportByUserId(userId: string) {
   const db = getDb();
-  const [[student], [settings], membership, walletRows, lessons, attendance, activities, launches, tokens, claims, submissions, paymentRows, verifiedProjects] = await Promise.all([
+  const [[student], [settings], membership, walletRows, lessons, attendance, activities, launches, tokens, claims, submissions, paymentRows, ownedVerifiedProjects, acceptedProjectMemberships] = await Promise.all([
     db.select({ id: users.id, username: users.username, displayName: users.displayName, createdAt: users.createdAt }).from(users).where(eq(users.id, userId)).limit(1),
     db.select().from(passportProfiles).where(eq(passportProfiles.userId, userId)).limit(1),
     db.select().from(cohortMembers).where(eq(cohortMembers.userId, userId)).limit(1),
@@ -39,8 +40,13 @@ export async function getPassportByUserId(userId: string) {
     db.select().from(campaignSubmissions).where(eq(campaignSubmissions.userId, userId)).orderBy(desc(campaignSubmissions.submittedAt)),
     db.select({ amount: payouts.amount, currency: payouts.currency, status: payouts.status, paidAt: payouts.paidAt }).from(payouts).where(eq(payouts.userId, userId)).orderBy(desc(payouts.paidAt)),
     db.select().from(builderProjects).where(and(eq(builderProjects.userId, userId), eq(builderProjects.status, "verified"))).orderBy(desc(builderProjects.reviewedAt)),
+    db.select().from(builderProjectMembers).where(and(eq(builderProjectMembers.userId, userId), eq(builderProjectMembers.status, "accepted"))),
   ]);
   if (!student) return null;
+
+  const sharedIds = acceptedProjectMemberships.map((row) => row.projectId);
+  const sharedVerifiedProjects = sharedIds.length ? await db.select().from(builderProjects).where(and(inArray(builderProjects.id, sharedIds), eq(builderProjects.status, "verified"))).orderBy(desc(builderProjects.reviewedAt)) : [];
+  const verifiedProjects = [...new Map([...ownedVerifiedProjects, ...sharedVerifiedProjects].map((row) => [row.id, row])).values()];
 
   const [[cohort], sessionRows, classroomRows, dropRows, campaignRows] = await Promise.all([
     membership[0] ? db.select({ title: cohorts.title, college: cohorts.college }).from(cohorts).where(eq(cohorts.id, membership[0].cohortId)).limit(1) : Promise.resolve([]),

@@ -492,6 +492,20 @@ export const builderProjects = sqliteTable("builder_projects", {
   index("idx_builder_projects_status_time").on(table.status, table.updatedAt),
 ]);
 
+export const builderProjectMembers = sqliteTable("builder_project_members", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().references(() => builderProjects.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  role: text("role").notNull().default("Contributor"),
+  status: text("status", { enum: ["invited", "accepted", "declined"] }).notNull().default("invited"),
+  invitedBy: text("invited_by").notNull().references(() => users.id),
+  invitedAt: text("invited_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  respondedAt: text("responded_at"),
+}, (table) => [
+  uniqueIndex("idx_builder_project_members_project_user").on(table.projectId, table.userId),
+  index("idx_builder_project_members_user_status").on(table.userId, table.status),
+]);
+
 export const payouts = sqliteTable("payouts", {
   id: text("id").primaryKey(),
   submissionId: text("submission_id").notNull().references(() => campaignSubmissions.id, { onDelete: "cascade" }),

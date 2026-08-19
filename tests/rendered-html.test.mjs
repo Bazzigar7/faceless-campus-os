@@ -321,3 +321,23 @@ test("Project Studio saves blockchain builds and requires educator verification"
   assert.match(schema, /builder_projects/);
   assert.match(schema, /idx_builder_projects_status_time/);
 });
+
+test("Project Studio teams require cohort invitations and share verified credit", async () => {
+  const [client, route, passport, league, schema] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/builder-projects/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/passport-profile.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/league/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /PROJECT TEAM/);
+  assert.match(client, /Join project/);
+  assert.match(client, /every accepted teammate’s Passport/);
+  assert.match(route, /Invite a student from your active Campus cohort/);
+  assert.match(route, /Only the project lead can invite teammates/);
+  assert.match(route, /eq\(builderProjectMembers\.status, "accepted"\)/);
+  assert.match(passport, /acceptedProjectMemberships/);
+  assert.match(league, /member\.status === "accepted"/);
+  assert.match(schema, /builder_project_members/);
+  assert.match(schema, /idx_builder_project_members_project_user/);
+});

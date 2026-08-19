@@ -169,6 +169,13 @@
       "when": 1787103553231,
       "tag": "0023_round_annihilus",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1787104261483,
+      "tag": "0024_high_tiger_shark",
+      "breakpoints": true
     }
   ]
 }

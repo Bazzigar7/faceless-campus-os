@@ -1,0 +1,1 @@
+ALTER TABLE `partner_drops` ADD `eligibility_ref` text;

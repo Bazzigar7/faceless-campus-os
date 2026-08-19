@@ -1,10 +1,10 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { campaignSubmissions, classroomSessionActivity, lessonProgress, partnerDropClaims, partnerDrops, testnetLaunches, testnetTokens, tokenAirdrops } from "../../../db/schema";
+import { attendanceRecords, attendanceSessions, campaignSubmissions, classroomSessionActivity, lessonProgress, partnerDropClaims, partnerDrops, testnetLaunches, testnetTokens, tokenAirdrops } from "../../../db/schema";
 import { faucetError, requireCampusUser, requireOwner } from "../../../lib/faucet-auth";
 
-type Eligibility = "open" | "live_quest" | "lesson" | "campaign";
+type Eligibility = "open" | "attendance" | "live_quest" | "lesson" | "campaign";
 type RewardKind = "credential" | "token_airdrop" | "nft_mint";
-const eligibilityOptions: Eligibility[] = ["open", "live_quest", "lesson", "campaign"];
+const eligibilityOptions: Eligibility[] = ["open", "attendance", "live_quest", "lesson", "campaign"];
 const rewardKindOptions: RewardKind[] = ["credential", "token_airdrop", "nft_mint"];
 
 async function state(request: Request) {
@@ -51,11 +51,16 @@ export async function POST(request: Request) {
       const { db, student } = await requireOwner(request);
       const title = String(body.title || "").trim(); const host = String(body.host || "").trim(); const description = String(body.description || "").trim();
       const eligibility = String(body.eligibility || "open") as Eligibility;
+      const eligibilityRef = String(body.eligibilityRef || "").trim() || null;
       const rewardKind = String(body.rewardKind || "credential") as RewardKind;
       const rewardAssetId = String(body.rewardAssetId || "").trim() || null;
       if (!title || !host || !description) return Response.json({ error: "Add the drop title, host and description" }, { status: 400 });
       if (!eligibilityOptions.includes(eligibility)) return Response.json({ error: "Choose valid eligibility" }, { status: 400 });
       if (!rewardKindOptions.includes(rewardKind)) return Response.json({ error: "Choose a valid reward type" }, { status: 400 });
+      if (eligibility === "attendance") {
+        const [session] = await db.select().from(attendanceSessions).where(eq(attendanceSessions.id, eligibilityRef || "")).limit(1);
+        if (!session) return Response.json({ error: "Choose the verified attendance session for this drop" }, { status: 400 });
+      }
       if (rewardKind !== "credential" && !rewardAssetId) return Response.json({ error: "Choose the onchain reward students should unlock" }, { status: 400 });
       if (rewardKind === "token_airdrop") {
         const [linked] = await db.select().from(tokenAirdrops).where(and(eq(tokenAirdrops.id, rewardAssetId || ""), eq(tokenAirdrops.status, "open"))).limit(1);
@@ -64,7 +69,7 @@ export async function POST(request: Request) {
         const [linked] = await db.select().from(testnetLaunches).where(eq(testnetLaunches.id, rewardAssetId || "")).limit(1);
         if (!linked?.contractAddress || !["deployed", "minted"].includes(linked.status) || (linked.chain === "solana" && !linked.candyMachineAddress)) return Response.json({ error: "Choose a collection with a public testnet mint" }, { status: 400 });
       }
-      await db.insert(partnerDrops).values({ id: crypto.randomUUID(), title: title.slice(0, 100), host: host.slice(0, 80), description: description.slice(0, 500), rewardLabel: String(body.rewardLabel || "Campus credential").slice(0, 80), rewardKind, rewardAssetId, eligibility, maxClaims: Math.max(1, Math.min(1000, Number(body.maxClaims) || 200)), status: "live", createdBy: student.id });
+      await db.insert(partnerDrops).values({ id: crypto.randomUUID(), title: title.slice(0, 100), host: host.slice(0, 80), description: description.slice(0, 500), rewardLabel: String(body.rewardLabel || "Campus credential").slice(0, 80), rewardKind, rewardAssetId, eligibility, eligibilityRef, maxClaims: Math.max(1, Math.min(1000, Number(body.maxClaims) || 200)), status: "live", createdBy: student.id });
       return Response.json(await state(request));
     }
     const { db, student } = await requireCampusUser(request);
@@ -75,7 +80,14 @@ export async function POST(request: Request) {
     if (existingClaims.some((claim) => claim.userId === student.id)) return Response.json(await state(request));
     if (existingClaims.length >= drop.maxClaims) return Response.json({ error: "This drop has reached its claim limit" }, { status: 409 });
     let evidence = "Open Campus claim";
-    if (drop.eligibility === "live_quest") {
+    if (drop.eligibility === "attendance") {
+      const [record, session] = await Promise.all([
+        db.select().from(attendanceRecords).where(and(eq(attendanceRecords.sessionId, drop.eligibilityRef || ""), eq(attendanceRecords.userId, student.id))).limit(1),
+        db.select().from(attendanceSessions).where(eq(attendanceSessions.id, drop.eligibilityRef || "")).limit(1),
+      ]);
+      if (!record.length) return Response.json({ error: "Only verified attendees of this session can claim the drop" }, { status: 403 });
+      evidence = `Verified attendance · ${session[0]?.title ?? "Campus session"}`;
+    } else if (drop.eligibility === "live_quest") {
       const rows = await db.select().from(classroomSessionActivity).where(and(eq(classroomSessionActivity.userId, student.id), eq(classroomSessionActivity.status, "completed"))).limit(1);
       if (!rows.length) return Response.json({ error: "Complete a verified live classroom quest to unlock this drop" }, { status: 403 });
       evidence = rows[0].proofLabel ?? "Verified live quest";

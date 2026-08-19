@@ -189,6 +189,20 @@ test("live attendance uses expiring cohort codes and a verified roster", async (
   assert.match(schema, /idx_attendance_records_session_user/);
 });
 
+test("partner drops can be restricted to verified session attendees", async () => {
+  const [client, route, schema] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/drops/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /Verified session attendees/);
+  assert.match(client, /Attendance → credential → onchain reward/);
+  assert.match(route, /Only verified attendees of this session can claim the drop/);
+  assert.match(route, /Verified attendance ·/);
+  assert.match(schema, /eligibility_ref/);
+  assert.match(schema, /"attendance"/);
+});
+
 test("campaign engine persists missions, submissions and owner payment approval", async () => {
   const [client, route, schema] = await Promise.all([
     readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),

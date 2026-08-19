@@ -404,3 +404,27 @@ export const payouts = sqliteTable("payouts", {
   uniqueIndex("idx_payouts_submission").on(table.submissionId),
   index("idx_payouts_status_time").on(table.status, table.approvedAt),
 ]);
+
+export const partnerDrops = sqliteTable("partner_drops", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  host: text("host").notNull(),
+  description: text("description").notNull(),
+  rewardLabel: text("reward_label").notNull().default("Campus credential"),
+  eligibility: text("eligibility", { enum: ["open", "live_quest", "lesson", "campaign"] }).notNull().default("open"),
+  maxClaims: integer("max_claims").notNull().default(200),
+  status: text("status", { enum: ["draft", "live", "closed"] }).notNull().default("live"),
+  createdBy: text("created_by").notNull().references(() => users.id),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [index("idx_partner_drops_status_time").on(table.status, table.createdAt)]);
+
+export const partnerDropClaims = sqliteTable("partner_drop_claims", {
+  id: text("id").primaryKey(),
+  dropId: text("drop_id").notNull().references(() => partnerDrops.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  evidence: text("evidence").notNull(),
+  claimedAt: text("claimed_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_partner_drop_claims_drop_user").on(table.dropId, table.userId),
+  index("idx_partner_drop_claims_user_time").on(table.userId, table.claimedAt),
+]);

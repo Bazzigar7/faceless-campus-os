@@ -159,3 +159,18 @@ test("campaign engine persists missions, submissions and owner payment approval"
   assert.match(schema, /campaign_enrollments/);
   assert.match(schema, /idx_submissions_campaign_user/);
 });
+
+test("partner drops create verified classroom credentials", async () => {
+  const [client, route, schema] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/drops/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /PARTNER DROP STUDIO/);
+  assert.match(client, /PARTNER CREDENTIALS/);
+  assert.match(client, /Verify & claim/);
+  assert.match(route, /Complete a verified live classroom quest/);
+  assert.match(route, /Approved creator campaign/);
+  assert.match(schema, /partner_drops/);
+  assert.match(schema, /idx_partner_drop_claims_drop_user/);
+});

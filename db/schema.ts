@@ -55,6 +55,22 @@ export const cohortMembers = sqliteTable("cohort_members", {
   uniqueIndex("idx_cohort_members_user").on(table.userId),
 ]);
 
+export const cohortAssignments = sqliteTable("cohort_assignments", {
+  id: text("id").primaryKey(),
+  cohortId: text("cohort_id").notNull().references(() => cohorts.id, { onDelete: "cascade" }),
+  course: text("course", { enum: ["blockchain", "bitcoin", "ethereum"] }).notNull(),
+  lessonId: integer("lesson_id").notNull(),
+  title: text("title").notNull(),
+  instructions: text("instructions").notNull().default(""),
+  dueAt: text("due_at"),
+  status: text("status", { enum: ["active", "archived"] }).notNull().default("active"),
+  createdBy: text("created_by").notNull().references(() => users.id),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_cohort_assignments_cohort_lesson").on(table.cohortId, table.course, table.lessonId),
+  index("idx_cohort_assignments_cohort_status").on(table.cohortId, table.status),
+]);
+
 export const educatorPermissions = sqliteTable("educator_permissions", {
   userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
   canApproveMainnet: integer("can_approve_mainnet", { mode: "boolean" }).notNull().default(false),

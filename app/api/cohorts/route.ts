@@ -1,14 +1,15 @@
 import { and, desc, eq } from "drizzle-orm";
-import { cohortMembers, cohorts, lessonProgress, users, wallets } from "../../../db/schema";
+import { cohortAssignments, cohortMembers, cohorts, lessonProgress, users, wallets } from "../../../db/schema";
 import { faucetError, requireCampusUser, requireOwner } from "../../../lib/faucet-auth";
 
 function clean(value: unknown, max: number) { return String(value || "").trim().slice(0, max); }
 
 async function cohortState(request: Request) {
   const { db, student } = await requireCampusUser(request);
-  const [cohortRows, memberRows, people, walletRows, lessonRows] = await Promise.all([
+  const [cohortRows, memberRows, assignmentRows, people, walletRows, lessonRows] = await Promise.all([
     db.select().from(cohorts).orderBy(desc(cohorts.createdAt)),
     db.select().from(cohortMembers),
+    db.select().from(cohortAssignments).orderBy(desc(cohortAssignments.createdAt)),
     student.role === "owner" ? db.select().from(users) : Promise.resolve([]),
     student.role === "owner" ? db.select().from(wallets) : Promise.resolve([]),
     student.role === "owner" ? db.select().from(lessonProgress) : Promise.resolve([]),
@@ -20,6 +21,11 @@ async function cohortState(request: Request) {
     return {
       ...cohort,
       memberCount: memberships.length,
+      assignments: assignmentRows.filter((assignment) => assignment.cohortId === cohort.id).map((assignment) => ({
+        ...assignment,
+        completedCount: memberships.filter((membership) => lessonRows.some((lesson) => lesson.userId === membership.userId && lesson.course === assignment.course && lesson.lessonId === assignment.lessonId && lesson.status === "completed")).length,
+        totalStudents: memberships.length,
+      })),
       roster: memberships.map((membership) => {
         const person = people.find((item) => item.id === membership.userId);
         const ownWallets = walletRows.filter((wallet) => wallet.userId === membership.userId);
@@ -40,6 +46,7 @@ async function cohortState(request: Request) {
     role: student.role,
     gateEnabled: cohortRows.some((cohort) => cohort.status === "active"),
     membership: ownCohort ? { id: ownCohort.id, title: ownCohort.title, college: ownCohort.college, joinedAt: ownMembership?.joinedAt } : null,
+    assignments: ownCohort ? assignmentRows.filter((assignment) => assignment.cohortId === ownCohort.id && assignment.status === "active") : [],
     cohorts: ownerCohorts,
   };
 }
@@ -84,6 +91,16 @@ export async function POST(request: Request) {
     if (!cohort) return Response.json({ error: "Cohort not found" }, { status: 404 });
     if (action === "set_enrollment") {
       await db.update(cohorts).set({ enrollmentOpen: Boolean(body.enrollmentOpen) }).where(eq(cohorts.id, cohort.id));
+    } else if (action === "assign_lesson") {
+      const course = clean(body.course, 20) as "blockchain" | "bitcoin" | "ethereum";
+      const lessonId = Number(body.lessonId);
+      const maxLessons = { blockchain: 3, bitcoin: 7, ethereum: 15 }[course];
+      const title = clean(body.title, 120); const instructions = clean(body.instructions, 500); const dueAt = clean(body.dueAt, 40) || null;
+      if (!maxLessons || !Number.isInteger(lessonId) || lessonId < 1 || lessonId > maxLessons || !title) return Response.json({ error: "Choose a valid lesson for this cohort" }, { status: 400 });
+      await db.insert(cohortAssignments).values({ id: crypto.randomUUID(), cohortId: cohort.id, course, lessonId, title, instructions, dueAt, status: "active", createdBy: student.id }).onConflictDoUpdate({ target: [cohortAssignments.cohortId, cohortAssignments.course, cohortAssignments.lessonId], set: { title, instructions, dueAt, status: "active", createdBy: student.id, createdAt: new Date().toISOString() } });
+    } else if (action === "archive_assignment") {
+      const assignmentId = clean(body.assignmentId, 100);
+      await db.update(cohortAssignments).set({ status: "archived" }).where(and(eq(cohortAssignments.id, assignmentId), eq(cohortAssignments.cohortId, cohort.id)));
     } else if (action === "complete") {
       await db.update(cohorts).set({ status: "complete", enrollmentOpen: false }).where(eq(cohorts.id, cohort.id));
     } else if (action === "move") {

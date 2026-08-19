@@ -157,6 +157,22 @@ test("private cohorts gate Campus access and give the educator a roster", async 
   assert.match(schema, /uniqueIndex\("idx_cohort_members_user"\)/);
 });
 
+test("educators can assign lessons and cohorts see one clear learning plan", async () => {
+  const [client, route, schema] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/cohorts/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /ASSIGN THE NEXT LESSON/);
+  assert.match(client, /YOUR COHORT PLAN/);
+  assert.match(client, /What your educator wants you to learn next/);
+  assert.match(route, /action === "assign_lesson"/);
+  assert.match(route, /action === "archive_assignment"/);
+  assert.match(route, /completedCount/);
+  assert.match(schema, /cohort_assignments/);
+  assert.match(schema, /idx_cohort_assignments_cohort_lesson/);
+});
+
 test("campaign engine persists missions, submissions and owner payment approval", async () => {
   const [client, route, schema] = await Promise.all([
     readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),

@@ -224,6 +224,8 @@ type ShowcaseProject = { id: string; title: string; chain: BuilderProject["chain
 type ShowcaseState = { role: "student" | "educator" | "owner"; projects: ShowcaseProject[] };
 type CampusNotification = { key: string; kind: "assignment" | "invitation" | "review" | "campaign" | "drop" | "owner"; title: string; body: string; destination: "learn" | "create" | "tools" | "campaigns" | "drops" | "admin"; createdAt: string; referenceId?: string; read: boolean };
 type NotificationState = { role: "student" | "educator" | "owner"; unreadCount: number; notifications: CampusNotification[] };
+type FirstDayStep = { id: "profile" | "wallets" | "cohort" | "funds" | "transaction" | "badge"; number: string; title: string; description: string; destination: "home" | "wallet" | "market" | "games"; complete: boolean; detail: string | null };
+type FirstDayState = { role: "student" | "educator" | "owner"; completedCount: number; totalSteps: number; complete: boolean; next: FirstDayStep | null; steps: FirstDayStep[]; activeStudents: number; cohortProgress: Array<{ id: string; title: string; college: string; students: number; ready: number; counts: Record<FirstDayStep["id"], number>; stuck: Array<{ id: FirstDayStep["id"]; title: string; count: number }> }> };
 type CohortRosterStudent = { id: string; username: string; displayName: string; email: string; joinedAt: string; ethereumAddress: string; solanaAddress: string; lessonsCompleted: number };
 type CohortAssignment = { id: string; cohortId: string; course: Course; lessonId: number; title: string; instructions: string; dueAt: string | null; status: "active" | "archived"; completedCount?: number; totalStudents?: number };
 type CampusCohort = { id: string; title: string; college: string; joinCode: string | null; expectedStudents: number; enrollmentOpen: boolean; status: "draft" | "active" | "complete"; memberCount: number; roster: CohortRosterStudent[]; assignments: CohortAssignment[] };
@@ -439,6 +441,7 @@ export default function OnchainLab() {
   const [notificationState, setNotificationState] = useState<NotificationState | null>(null);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [notificationBusy, setNotificationBusy] = useState(false);
+  const [firstDayState, setFirstDayState] = useState<FirstDayState | null>(null);
   const [builderReviewNotes, setBuilderReviewNotes] = useState<Record<string, string>>({});
   const [builderInvite, setBuilderInvite] = useState({ username: "", role: "Developer" });
   const [builderDraft, setBuilderDraft] = useState<{ id: string; title: string; chain: BuilderProject["chain"]; useCase: string; problem: string; audience: string; solution: string; milestones: BuilderMilestone[]; contractReference: string; demoUrl: string }>({ id: "", title: "", chain: "ethereum", useCase: "NFTs & digital ownership", problem: "", audience: "", solution: "", milestones: ["Map the user flow", "Build the first working demo", "Test with a classmate", "Add testnet or demo proof"].map((label) => ({ label, done: false })), contractReference: "", demoUrl: "" });
@@ -620,6 +623,7 @@ export default function OnchainLab() {
     void loadBuilderProjects();
     void loadShowcase();
     void loadNotifications();
+    void loadFirstDay();
     void loadCohorts();
     void loadAttendance();
     void loadPassport();
@@ -634,6 +638,11 @@ export default function OnchainLab() {
   useEffect(() => {
     if (active === "admin" && faucetState?.role === "owner") void loadEducatorDashboard();
   }, [active, faucetState?.role]);
+
+  useEffect(() => {
+    if (!authenticated || profileStatus !== "ready" || (active !== "home" && active !== "admin")) return;
+    void loadFirstDay();
+  }, [active, authenticated, profileStatus, cohortState?.membership?.id, leagueState?.own.xp]);
 
   useEffect(() => {
     if (active !== "admin" || faucetState?.role !== "owner") return;
@@ -826,6 +835,16 @@ export default function OnchainLab() {
     if (notification.destination === "create") setBuildArea("studio");
     setActive(notification.destination);
     setNotificationOpen(false);
+  }
+
+  async function loadFirstDay() {
+    const requestToken = await campusIdentityToken(); if (!requestToken) return;
+    try { const response = await fetch("/api/onboarding", { headers: { "privy-id-token": requestToken } }); const result = await response.json() as FirstDayState & { error?: string }; if (!response.ok) throw new Error(result.error ?? "First-Day Runway is unavailable"); setFirstDayState(result); } catch { /* Runway refreshes with the next verified Campus action. */ }
+  }
+
+  function openFirstDayStep(step: FirstDayStep) {
+    if (step.id === "transaction") setMarketArea("nfts");
+    setActive(step.destination);
   }
 
   function openBuilderProject(project?: BuilderProject) {
@@ -2440,6 +2459,8 @@ export default function OnchainLab() {
                 </div>
               </section>
 
+              {firstDayState && <section className={firstDayState.complete ? "first-day-runway complete" : "first-day-runway"}><header><div><span className="eyebrow">YOUR FIRST DAY ONCHAIN</span><h2>{firstDayState.complete ? "Runway complete." : "One clear path. No hunting around."}</h2><p>{firstDayState.complete ? "Your identity, wallets, classroom access and first proof are ready." : "Campus OS checks real account and testnet activity, then opens the exact next step."}</p></div><aside><strong>{firstDayState.completedCount}/{firstDayState.totalSteps}</strong><span>steps ready</span><i><b style={{ width: `${(firstDayState.completedCount / firstDayState.totalSteps) * 100}%` }} /></i></aside></header><div className="first-day-steps">{firstDayState.steps.map((step) => <button key={step.id} className={step.complete ? "done" : firstDayState.next?.id === step.id ? "next" : ""} onClick={() => openFirstDayStep(step)} disabled={step.complete && step.id !== "badge"}><span>{step.complete ? "✓" : step.number}</span><div><small>{step.complete ? step.detail || "VERIFIED" : firstDayState.next?.id === step.id ? "DO THIS NEXT" : "UPCOMING"}</small><b>{step.title}</b><p>{step.description}</p></div><em>{step.complete ? "DONE" : firstDayState.next?.id === step.id ? "OPEN →" : ""}</em></button>)}</div>{firstDayState.next ? <footer><span><b>Next: {firstDayState.next.title}</b><small>{firstDayState.next.description}</small></span><button onClick={() => openFirstDayStep(firstDayState.next!)}>Continue first-day setup →</button></footer> : <footer className="finished"><span><b>First Passport proof unlocked</b><small>Keep learning, building and creating to grow your verified record.</small></span><button onClick={() => setActive("passport")}>Open my Passport →</button></footer>}</section>}
+
               {attendanceState?.prompt && <section className="attendance-checkin card"><div className="attendance-live-mark"><i /> LIVE CHECK-IN</div><div><small>{attendanceState.prompt.host}</small><h3>{attendanceState.prompt.title}</h3><p>Your educator has opened attendance for this room. Enter the code shown in class.</p></div><form onSubmit={(event) => { event.preventDefault(); void attendanceAction("check_in", { code: attendanceCode }); }}><input aria-label="Classroom attendance code" value={attendanceCode} onChange={(event) => { setAttendanceCode(event.target.value.toUpperCase()); setAttendanceError(""); }} placeholder="6-DIGIT CODE" maxLength={6} /><button disabled={attendanceBusy || attendanceCode.length !== 6}>{attendanceBusy ? "Verifying…" : "Check in →"}</button></form>{attendanceError && <span>{attendanceError}</span>}<small>Closes {new Date(attendanceState.prompt.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · tied to your verified Campus profile</small></section>}
 
               <section className="wallet-card card">
@@ -2817,6 +2838,7 @@ export default function OnchainLab() {
           {active === "admin" && (
             <div className="page-stack">
               <section className="admin-banner educator-hero"><div><span className="eyebrow">EDUCATOR COMMAND CENTRE</span><h2>{educatorDashboard?.currentSession ? "Your classroom is live." : "Ready for the next session."}</h2><p>See who is ready, spot students who are stuck, and send one guided onchain quest to the whole class.</p></div><div className="admin-hero-actions"><button onClick={downloadClassReport}>Download class CSV</button><button onClick={loadEducatorDashboard} disabled={educatorBusy}>{educatorBusy ? "Refreshing…" : "Refresh classroom"}</button></div></section>
+              {Boolean(firstDayState?.cohortProgress.length) && <section className="first-day-admin card"><div className="section-head"><span><b>FIRST-DAY READINESS</b><small>See exactly where each batch is getting stuck before the session begins</small></span><button onClick={() => void loadFirstDay()}>Refresh readiness ↻</button></div><div>{firstDayState?.cohortProgress.map((cohort) => <article key={cohort.id}><header><span><small>{cohort.college}</small><b>{cohort.title}</b></span><em>{cohort.ready}/{cohort.students} runway complete</em></header><div className="first-day-admin-bars">{firstDayState.steps.map((step) => <span key={step.id}><b>{step.number} · {step.title}</b><i><u style={{ width: `${cohort.students ? (cohort.counts[step.id] / cohort.students) * 100 : 0}%` }} /></i><small>{cohort.counts[step.id]} / {cohort.students}</small></span>)}</div>{cohort.stuck.length ? <footer><b>Needs attention</b>{cohort.stuck.slice(0, 3).map((row) => <span key={row.id}>{row.count} missing · {row.title}</span>)}</footer> : <footer className="ready"><b>Batch ready ✓</b><span>Every joined student has completed the first onchain runway.</span></footer>}</article>)}</div></section>}
               <section className="cohort-manager card">
                 <div className="section-head"><span><b>COHORT MANAGER</b><small>Create private batches, control enrollment and export the complete roster</small></span><em>{cohortState?.cohorts.filter((cohort) => cohort.status === "active").length ?? 0} active</em></div>
                 <form onSubmit={(event) => { event.preventDefault(); void cohortAction("create", cohortDraft); }}><label>Cohort name<input value={cohortDraft.title} onChange={(event) => setCohortDraft((current) => ({ ...current, title: event.target.value }))} placeholder="Blockchain Club · Batch 01" required /></label><label>College<input value={cohortDraft.college} onChange={(event) => setCohortDraft((current) => ({ ...current, college: event.target.value }))} placeholder="College name" required /></label><label>Seat limit<input type="number" min="1" max="500" value={cohortDraft.expectedStudents} onChange={(event) => setCohortDraft((current) => ({ ...current, expectedStudents: event.target.value }))} /></label><button disabled={cohortBusy}>{cohortBusy ? "Creating…" : "Create private cohort →"}</button></form>

@@ -379,3 +379,21 @@ test("Campus Inbox combines private actions and persists per-student read state"
   assert.match(schema, /notification_reads/);
   assert.match(schema, /idx_notification_reads_user_key/);
 });
+
+test("First-Day Runway guides students through verified onboarding and shows cohort readiness", async () => {
+  const [client, route] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/onboarding/route.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /YOUR FIRST DAY ONCHAIN/);
+  assert.match(client, /Continue first-day setup/);
+  assert.match(client, /FIRST-DAY READINESS/);
+  assert.match(client, /See exactly where each batch is getting stuck/);
+  assert.match(route, /Create your Campus identity/);
+  assert.match(route, /Prepare both wallets/);
+  assert.match(route, /Claim test funds/);
+  assert.match(route, /Make your first onchain move/);
+  assert.match(route, /Unlock your first proof badge/);
+  assert.match(route, /row\.status === "sent"/);
+  assert.match(route, /student\.role === "owner"/);
+});

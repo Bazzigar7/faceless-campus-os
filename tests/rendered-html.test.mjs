@@ -149,7 +149,12 @@ test("campaign engine persists missions, submissions and owner payment approval"
   assert.match(client, /CAMPAIGN CONTROL/);
   assert.match(client, /Submit work/);
   assert.match(client, /Approve payment/);
+  assert.match(client, /APPROVED PAYMENT QUEUE/);
+  assert.match(client, /PAYMENT LEDGER/);
+  assert.match(client, /YOUR CREATOR EARNINGS/);
   assert.match(route, /approved_for_payment/);
+  assert.match(route, /record_payment/);
+  assert.match(route, /destinationReference/);
   assert.match(route, /Paste a valid public content link/);
   assert.match(schema, /campaign_enrollments/);
   assert.match(schema, /idx_submissions_campaign_user/);

@@ -1,5 +1,5 @@
 import { and, desc, eq } from "drizzle-orm";
-import { campaignEnrollments, campaigns, campaignSubmissions, users } from "../../../db/schema";
+import { campaignEnrollments, campaigns, campaignSubmissions, payouts, users } from "../../../db/schema";
 import { faucetError, requireCampusUser, requireOwner } from "../../../lib/faucet-auth";
 
 type CampaignType = "creator" | "faceless" | "clipper" | "user_acquisition";
@@ -7,15 +7,17 @@ const campaignTypes: CampaignType[] = ["creator", "faceless", "clipper", "user_a
 
 async function campaignState(request: Request) {
   const { db, student } = await requireCampusUser(request);
-  const [allCampaigns, enrollments, submissions, people] = await Promise.all([
+  const [allCampaigns, enrollments, submissions, people, payoutRows] = await Promise.all([
     db.select().from(campaigns).orderBy(desc(campaigns.createdAt)), db.select().from(campaignEnrollments),
-    db.select().from(campaignSubmissions).orderBy(desc(campaignSubmissions.submittedAt)), db.select().from(users),
+    db.select().from(campaignSubmissions).orderBy(desc(campaignSubmissions.submittedAt)), db.select().from(users), db.select().from(payouts).orderBy(desc(payouts.approvedAt)),
   ]);
   const visible = student.role === "owner" ? allCampaigns : allCampaigns.filter((item) => item.status === "live");
   return {
     role: student.role,
     campaigns: visible.map((campaign) => ({ ...campaign, joined: enrollments.some((row) => row.campaignId === campaign.id && row.userId === student.id), joinedCount: enrollments.filter((row) => row.campaignId === campaign.id).length, ownSubmission: submissions.find((row) => row.campaignId === campaign.id && row.userId === student.id) ?? null })),
     reviewQueue: student.role === "owner" ? submissions.map((submission) => ({ ...submission, campaign: allCampaigns.find((item) => item.id === submission.campaignId) ?? null, student: people.find((item) => item.id === submission.userId) ?? null })) : [],
+    payouts: (student.role === "owner" ? payoutRows : payoutRows.filter((row) => row.userId === student.id)).map((payout) => ({ ...payout, campaign: allCampaigns.find((item) => submissions.find((submission) => submission.id === payout.submissionId)?.campaignId === item.id) ?? null })),
+    paymentQueue: student.role === "owner" ? submissions.filter((submission) => submission.status === "approved_for_payment" && !payoutRows.some((payout) => payout.submissionId === submission.id)).map((submission) => ({ ...submission, campaign: allCampaigns.find((item) => item.id === submission.campaignId) ?? null, student: people.find((item) => item.id === submission.userId) ?? null })) : [],
   };
 }
 
@@ -56,6 +58,16 @@ export async function POST(request: Request) {
       const submissionId = String(body.submissionId || "");
       const status = body.status === "approved_for_payment" ? "approved_for_payment" : body.status === "changes_requested" ? "changes_requested" : "rejected";
       await db.update(campaignSubmissions).set({ status, reviewNotes: String(body.reviewNotes || "").slice(0, 500), reviewedBy: student.id, reviewedAt: new Date().toISOString() }).where(eq(campaignSubmissions.id, submissionId));
+    } else if (body.action === "record_payment") {
+      if (student.role !== "owner") return Response.json({ error: "Only the Campus OS owner can record payments" }, { status: 403 });
+      const submissionId = String(body.submissionId || "");
+      const [submission] = await db.select().from(campaignSubmissions).where(and(eq(campaignSubmissions.id, submissionId), eq(campaignSubmissions.campaignId, campaignId))).limit(1);
+      if (!submission || submission.status !== "approved_for_payment") return Response.json({ error: "Approve this work before recording payment" }, { status: 409 });
+      const destinationReference = String(body.destinationReference || "").trim(); const transactionReference = String(body.transactionReference || "").trim();
+      if (!destinationReference || !transactionReference) return Response.json({ error: "Add the payout destination and payment reference" }, { status: 400 });
+      const now = new Date().toISOString();
+      await db.insert(payouts).values({ id: crypto.randomUUID(), submissionId, userId: submission.userId, method: "manual_bank", destinationReference: destinationReference.slice(0, 120), amount: campaign.rewardAmount, currency: campaign.rewardCurrency, status: "paid", approvedBy: student.id, transactionReference: transactionReference.slice(0, 120), approvedAt: now, paidAt: now });
+      await db.update(campaignSubmissions).set({ status: "paid", reviewedBy: student.id, reviewedAt: now }).where(eq(campaignSubmissions.id, submissionId));
     } else return Response.json({ error: "Choose a valid campaign action" }, { status: 400 });
     return Response.json(await campaignState(request));
   } catch (error) { return faucetError(error); }

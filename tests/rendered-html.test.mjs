@@ -195,3 +195,19 @@ test("Campus League scores only verified learning and testnet activity", async (
   assert.match(route, /Math\.min\(breakdown\.tokenTransfers, caps\.transfer\)/);
   assert.match(client, /No self-reported/);
 });
+
+test("creator workspace saves guidance-first shoot plans", async () => {
+  const [client, route, schema] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/creator-projects/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /SAVED CREATOR WORKSPACE/);
+  assert.match(client, /THE FIVE-SHOT PLAN/);
+  assert.match(client, /Instagram Edits/);
+  assert.match(client, /JOINED CAMPAIGNS/);
+  assert.match(route, /Complete the hook, all five shots and the caption/);
+  assert.match(route, /eq\(creatorProjects\.userId, student\.id\)/);
+  assert.match(schema, /creator_projects/);
+  assert.match(schema, /idx_creator_projects_user_time/);
+});

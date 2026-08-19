@@ -211,6 +211,9 @@ type DropState = { role: "student" | "educator" | "owner"; drops: PartnerDrop[];
 type LeagueBreakdown = { lessons: number; liveQuests: number; faucetClaims: number; tokenTransfers: number; nftMints: number; tokenLaunches: number; rwaTrades: number; campaigns: number; partnerDrops: number; airdrops: number };
 type LeaguePlayer = { id: string; username: string; displayName: string; xp: number; rank: number; level: number; name: string; nextAt: number; badges: string[]; breakdown: LeagueBreakdown };
 type LeagueState = { own: Omit<LeaguePlayer, "id" | "username" | "displayName" | "rank"> & { rank: number | null }; leaderboard: LeaguePlayer[]; missions: Array<{ id: string; title: string; xp: number; done: boolean; destination: Tab }>; scoring: Record<string, number> };
+type CreatorFormat = "on_camera" | "faceless" | "voiceover" | "hands_only" | "screen_recording";
+type CreatorProject = { id: string; title: string; platform: string; format: CreatorFormat; objective: string; hook: string; shots: string[]; caption: string; status: "draft" | "ready"; createdAt: string; updatedAt: string };
+type CreatorProjectState = { projects: CreatorProject[] };
 type EducatorDashboard = {
   metrics: { activeStudents: number; bothWallets: number; lessonsCompleted: number; onchainActions: number; nftCollections: number; tokens: number; rwas: number; openAirdrops: number };
   roster: Array<{ id: string; username: string; displayName: string; email: string; ethereumReady: boolean; solanaReady: boolean; lessonsCompleted: number; ethFunded: boolean; solFunded: boolean; assetsCreated: number; issues: string[]; sessionStatus: ClassroomActivity["status"] | null; proofLabel: string | null }>;
@@ -406,6 +409,9 @@ export default function OnchainLab() {
   const [dropDraft, setDropDraft] = useState({ title: "", host: "", description: "", rewardLabel: "Campus credential", rewardKind: "credential" as PartnerReward["kind"], rewardAssetId: "", eligibility: "live_quest" as PartnerDrop["eligibility"], maxClaims: "200" });
   const [leagueState, setLeagueState] = useState<LeagueState | null>(null);
   const [leagueLoading, setLeagueLoading] = useState(false);
+  const [creatorProjectState, setCreatorProjectState] = useState<CreatorProjectState | null>(null);
+  const [creatorProjectBusy, setCreatorProjectBusy] = useState(false);
+  const [creatorDraft, setCreatorDraft] = useState<{ id: string; title: string; platform: string; format: CreatorFormat; objective: string; hook: string; shots: string[]; caption: string }>({ id: "", title: "", platform: "Instagram Reels", format: "faceless", objective: "", hook: "", shots: ["", "", "", "", ""], caption: "" });
   const [artPreview, setArtPreview] = useState<string | null>(null);
   const [selectedCourse, setSelectedCourse] = useState<Course>("ethereum");
   const [selectedLesson, setSelectedLesson] = useState<Lesson>(ethereumLessons[1]);
@@ -564,6 +570,7 @@ export default function OnchainLab() {
     void loadCampaigns();
     void loadDrops();
     void loadLeague();
+    void loadCreatorProjects();
   }, [authenticated, identityToken, profileStatus]);
 
   useEffect(() => {
@@ -706,6 +713,27 @@ export default function OnchainLab() {
     const requestToken = await campusIdentityToken(); if (!requestToken) return;
     setLeagueLoading(true);
     try { const response = await fetch("/api/league", { headers: { "privy-id-token": requestToken } }); const result = await response.json() as LeagueState & { error?: string }; if (!response.ok) throw new Error(result.error ?? "Campus League is unavailable"); setLeagueState(result); } catch (error) { notify(error instanceof Error ? error.message : "Campus League is unavailable"); } finally { setLeagueLoading(false); }
+  }
+
+  async function loadCreatorProjects() {
+    const requestToken = await campusIdentityToken(); if (!requestToken) return;
+    try { const response = await fetch("/api/creator-projects", { headers: { "privy-id-token": requestToken } }); const result = await response.json() as CreatorProjectState & { error?: string }; if (!response.ok) throw new Error(result.error ?? "Creator projects are unavailable"); setCreatorProjectState(result); } catch { /* The workspace remains editable and can retry on save. */ }
+  }
+
+  function openCreatorProject(project?: CreatorProject) {
+    setCreatorDraft(project ? { id: project.id, title: project.title, platform: project.platform, format: project.format, objective: project.objective, hook: project.hook, shots: project.shots, caption: project.caption } : { id: "", title: "", platform: "Instagram Reels", format: "faceless", objective: "", hook: "", shots: ["", "", "", "", ""], caption: "" });
+  }
+
+  async function saveCreatorProject(action: "save" | "mark_ready") {
+    const requestToken = await campusIdentityToken(); if (!requestToken) return;
+    setCreatorProjectBusy(true);
+    try { const response = await fetch("/api/creator-projects", { method: "POST", headers: { "content-type": "application/json", "privy-id-token": requestToken }, body: JSON.stringify({ action, ...creatorDraft }) }); const result = await response.json() as CreatorProjectState & { error?: string }; if (!response.ok) throw new Error(result.error ?? "Creator project could not be saved"); setCreatorProjectState(result); if (result.projects[0]) openCreatorProject(result.projects[0]); notify(action === "mark_ready" ? "Content plan ready to shoot and edit" : "Creator project saved"); } catch (error) { notify(error instanceof Error ? error.message : "Creator project could not be saved"); } finally { setCreatorProjectBusy(false); }
+  }
+
+  function copyCreatorPlan() {
+    const format = creatorDraft.format.replaceAll("_", " ");
+    const plan = `${creatorDraft.title}\n${creatorDraft.platform} · ${format}\n\nOBJECTIVE\n${creatorDraft.objective}\n\nHOOK\n${creatorDraft.hook}\n\nFIVE SHOTS\n${creatorDraft.shots.map((shot, index) => `${index + 1}. ${shot}`).join("\n")}\n\nCAPTION\n${creatorDraft.caption}`;
+    void navigator.clipboard.writeText(plan).then(() => notify("Shoot plan copied — paste it into Notes or your editing workflow"));
   }
 
   async function partnerDropAction(action: "create" | "claim", payload: Record<string, unknown>) {
@@ -2438,6 +2466,7 @@ export default function OnchainLab() {
                 <div><span className="eyebrow">CREATOR TOOLS</span><h2>Learn the craft.<br />Make better content.</h2><p>Simple, phone-first guidance for turning an idea or brief into content you can confidently publish.</p><button className="primary" onClick={() => setActive("mask")}>Plan with Mask →</button></div>
                 <div className="tools-flow" aria-label="Creator workflow"><span><b>01</b>Understand</span><span><b>02</b>Script</span><span><b>03</b>Shoot</span><span><b>04</b>Edit</span></div>
               </section>
+              <section className="creator-workspace card"><div className="creator-workspace-head"><div><span className="eyebrow">SAVED CREATOR WORKSPACE</span><h3>Turn the brief into a shoot-ready plan.</h3><p>Plan here, shoot on your phone, then trim and caption inside Instagram Edits.</p></div><button onClick={() => openCreatorProject()}>＋ New project</button></div><div className="creator-workspace-layout"><form onSubmit={(event) => { event.preventDefault(); void saveCreatorProject("save"); }}><div className="creator-project-grid"><label>Project or campaign<input required value={creatorDraft.title} onChange={(event) => setCreatorDraft((current) => ({ ...current, title: event.target.value }))} placeholder="Campus café Reel" /></label><label>Platform<select value={creatorDraft.platform} onChange={(event) => setCreatorDraft((current) => ({ ...current, platform: event.target.value }))}><option>Instagram Reels</option><option>YouTube Shorts</option><option>X video</option><option>LinkedIn</option></select></label><label>Format<select value={creatorDraft.format} onChange={(event) => setCreatorDraft((current) => ({ ...current, format: event.target.value as CreatorFormat }))}><option value="faceless">Faceless</option><option value="on_camera">On camera</option><option value="voiceover">Voiceover</option><option value="hands_only">Hands only</option><option value="screen_recording">Screen recording</option></select></label><label className="wide">Objective<textarea required value={creatorDraft.objective} onChange={(event) => setCreatorDraft((current) => ({ ...current, objective: event.target.value }))} placeholder="What should the viewer understand, feel or do?" /></label><label className="wide hook-field">Hook<input value={creatorDraft.hook} onChange={(event) => setCreatorDraft((current) => ({ ...current, hook: event.target.value }))} placeholder="The first line or visual that stops the scroll" /></label></div><div className="five-shot-plan"><div><b>THE FIVE-SHOT PLAN</b><small>One clear job for every clip</small></div>{["Hook", "Context", "Detail", "Proof", "Call to action"].map((label, index) => <label key={label}><span>{index + 1}</span><b>{label}</b><input value={creatorDraft.shots[index] ?? ""} onChange={(event) => setCreatorDraft((current) => ({ ...current, shots: current.shots.map((shot, shotIndex) => shotIndex === index ? event.target.value : shot) }))} placeholder={index === 0 ? "Opening visual or spoken line" : index === 4 ? "What should the viewer do next?" : `What will shot ${index + 1} show?`} /></label>)}</div><label className="creator-caption">Caption + disclosure<textarea value={creatorDraft.caption} onChange={(event) => setCreatorDraft((current) => ({ ...current, caption: event.target.value }))} placeholder="Write the caption, CTA and any required ad/partner disclosure." /></label><div className="creator-project-actions"><button type="submit" disabled={creatorProjectBusy}>{creatorProjectBusy ? "Saving…" : "Save draft"}</button><button type="button" onClick={() => void saveCreatorProject("mark_ready")} disabled={creatorProjectBusy}>Mark ready to shoot →</button><button type="button" onClick={copyCreatorPlan}>Copy plan</button></div></form><aside><div className="section-head"><span><b>YOUR PROJECTS</b><small>Continue where you left off</small></span></div>{creatorProjectState?.projects.length ? creatorProjectState.projects.slice(0, 6).map((project) => <button className={creatorDraft.id === project.id ? "active" : ""} key={project.id} onClick={() => openCreatorProject(project)}><span><b>{project.title}</b><small>{project.platform} · {project.format.replaceAll("_", " ")}</small></span><em>{project.status === "ready" ? "READY" : "DRAFT"}</em></button>) : <p>No saved projects yet. Start with your next campaign or content idea.</p>}{Boolean(campaignState?.campaigns.some((campaign) => campaign.joined)) && <div className="creator-briefs"><b>JOINED CAMPAIGNS</b>{campaignState?.campaigns.filter((campaign) => campaign.joined).slice(0, 3).map((campaign) => <button key={campaign.id} onClick={() => setCreatorDraft((current) => ({ ...current, title: campaign.title, platform: campaign.platform, objective: campaign.brief }))}><span><strong>{campaign.brand}</strong><small>{campaign.title}</small></span><em>Use brief →</em></button>)}</div>}</aside></div><footer><span><b>1 · Plan</b> Campus OS</span><span><b>2 · Shoot</b> Phone camera</span><span><b>3 · Edit</b> Instagram Edits</span><span><b>4 · Submit</b> Campaigns</span></footer></section>
               <div className="creator-school-head"><div><span className="eyebrow">CREATOR SCHOOL</span><h3>Learn the skill before taking the brief.</h3></div><span>Phone-first · Beginner-friendly</span></div>
               <div className="creator-tool-grid">{creatorTools.map((tool) => <article className="creator-tool card" key={tool.number}><span>{tool.number}</span><h3>{tool.title}</h3><p>{tool.copy}</p><button onClick={() => tool.number === "03" ? setActive("mask") : notify(`${tool.title} opened in guided mode`)}>{tool.action} →</button></article>)}</div>
               <section className="editing-handoff">

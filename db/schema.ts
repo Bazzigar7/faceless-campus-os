@@ -387,6 +387,24 @@ export const campaignSubmissions = sqliteTable("campaign_submissions", {
   index("idx_submissions_user_time").on(table.userId, table.submittedAt),
 ]);
 
+export const creatorProjects = sqliteTable("creator_projects", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  platform: text("platform").notNull().default("Instagram Reels"),
+  format: text("format", { enum: ["on_camera", "faceless", "voiceover", "hands_only", "screen_recording"] }).notNull().default("faceless"),
+  objective: text("objective").notNull(),
+  hook: text("hook").notNull().default(""),
+  shots: text("shots").notNull().default("[]"),
+  caption: text("caption").notNull().default(""),
+  status: text("status", { enum: ["draft", "ready"] }).notNull().default("draft"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_creator_projects_user_time").on(table.userId, table.updatedAt),
+  index("idx_creator_projects_user_status").on(table.userId, table.status),
+]);
+
 export const payouts = sqliteTable("payouts", {
   id: text("id").primaryKey(),
   submissionId: text("submission_id").notNull().references(() => campaignSubmissions.id, { onDelete: "cascade" }),

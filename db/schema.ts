@@ -71,6 +71,32 @@ export const cohortAssignments = sqliteTable("cohort_assignments", {
   index("idx_cohort_assignments_cohort_status").on(table.cohortId, table.status),
 ]);
 
+export const attendanceSessions = sqliteTable("attendance_sessions", {
+  id: text("id").primaryKey(),
+  cohortId: text("cohort_id").notNull().references(() => cohorts.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  host: text("host").notNull().default("Faceless"),
+  checkInCode: text("check_in_code").notNull(),
+  status: text("status", { enum: ["open", "closed"] }).notNull().default("open"),
+  expiresAt: text("expires_at").notNull(),
+  openedBy: text("opened_by").notNull().references(() => users.id),
+  openedAt: text("opened_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  closedAt: text("closed_at"),
+}, (table) => [
+  uniqueIndex("idx_attendance_sessions_code").on(table.checkInCode),
+  index("idx_attendance_sessions_cohort_status").on(table.cohortId, table.status),
+]);
+
+export const attendanceRecords = sqliteTable("attendance_records", {
+  id: text("id").primaryKey(),
+  sessionId: text("session_id").notNull().references(() => attendanceSessions.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  checkedInAt: text("checked_in_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_attendance_records_session_user").on(table.sessionId, table.userId),
+  index("idx_attendance_records_user_time").on(table.userId, table.checkedInAt),
+]);
+
 export const educatorPermissions = sqliteTable("educator_permissions", {
   userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
   canApproveMainnet: integer("can_approve_mainnet", { mode: "boolean" }).notNull().default(false),

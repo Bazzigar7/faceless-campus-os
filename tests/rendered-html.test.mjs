@@ -173,6 +173,22 @@ test("educators can assign lessons and cohorts see one clear learning plan", asy
   assert.match(schema, /idx_cohort_assignments_cohort_lesson/);
 });
 
+test("live attendance uses expiring cohort codes and a verified roster", async () => {
+  const [client, route, schema] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/attendance/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /LIVE SESSION ATTENDANCE/);
+  assert.match(client, /LIVE CHECK-IN/);
+  assert.match(client, /Attendance roster downloaded/);
+  assert.match(route, /action === "check_in"/);
+  assert.match(route, /That check-in code is invalid or has expired/);
+  assert.match(route, /This check-in belongs to another cohort/);
+  assert.match(schema, /attendance_sessions/);
+  assert.match(schema, /idx_attendance_records_session_user/);
+});
+
 test("campaign engine persists missions, submissions and owner payment approval", async () => {
   const [client, route, schema] = await Promise.all([
     readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),

@@ -219,6 +219,9 @@ type CohortRosterStudent = { id: string; username: string; displayName: string; 
 type CohortAssignment = { id: string; cohortId: string; course: Course; lessonId: number; title: string; instructions: string; dueAt: string | null; status: "active" | "archived"; completedCount?: number; totalStudents?: number };
 type CampusCohort = { id: string; title: string; college: string; joinCode: string | null; expectedStudents: number; enrollmentOpen: boolean; status: "draft" | "active" | "complete"; memberCount: number; roster: CohortRosterStudent[]; assignments: CohortAssignment[] };
 type CohortState = { role: "student" | "educator" | "owner"; gateEnabled: boolean; membership: { id: string; title: string; college: string; joinedAt?: string } | null; assignments: CohortAssignment[]; cohorts: CampusCohort[] };
+type AttendanceRecord = { id: string; userId?: string; sessionId?: string; username?: string; displayName?: string; email?: string; checkedInAt: string; title?: string; host?: string; openedAt?: string };
+type AttendanceSession = { id: string; cohortId: string; cohortTitle: string; title: string; host: string; checkInCode: string; status: "open" | "closed"; expiresAt: string; openedAt: string; closedAt: string | null; attendanceCount: number; records: AttendanceRecord[] };
+type AttendanceState = { role: "student" | "educator" | "owner"; prompt: { id: string; title: string; host: string; expiresAt: string } | null; ownRecords: AttendanceRecord[]; sessions: AttendanceSession[] };
 type EducatorDashboard = {
   metrics: { activeStudents: number; bothWallets: number; lessonsCompleted: number; onchainActions: number; nftCollections: number; tokens: number; rwas: number; openAirdrops: number };
   roster: Array<{ id: string; username: string; displayName: string; email: string; ethereumReady: boolean; solanaReady: boolean; lessonsCompleted: number; ethFunded: boolean; solFunded: boolean; assetsCreated: number; issues: string[]; sessionStatus: ClassroomActivity["status"] | null; proofLabel: string | null }>;
@@ -424,6 +427,11 @@ export default function OnchainLab() {
   const [cohortError, setCohortError] = useState("");
   const [cohortDraft, setCohortDraft] = useState({ title: "", college: "", expectedStudents: "200" });
   const [cohortAssignmentDraft, setCohortAssignmentDraft] = useState({ cohortId: "", course: "blockchain" as Course, lessonId: "1", instructions: "", dueAt: "" });
+  const [attendanceState, setAttendanceState] = useState<AttendanceState | null>(null);
+  const [attendanceCode, setAttendanceCode] = useState("");
+  const [attendanceBusy, setAttendanceBusy] = useState(false);
+  const [attendanceError, setAttendanceError] = useState("");
+  const [attendanceDraft, setAttendanceDraft] = useState({ cohortId: "", title: "", host: "Faceless", durationMinutes: "15" });
   const [artPreview, setArtPreview] = useState<string | null>(null);
   const [selectedCourse, setSelectedCourse] = useState<Course>("ethereum");
   const [selectedLesson, setSelectedLesson] = useState<Lesson>(ethereumLessons[1]);
@@ -585,6 +593,7 @@ export default function OnchainLab() {
     void loadLeague();
     void loadCreatorProjects();
     void loadCohorts();
+    void loadAttendance();
   }, [authenticated, identityToken, profileStatus]);
 
   useEffect(() => {
@@ -602,6 +611,12 @@ export default function OnchainLab() {
     const timer = window.setInterval(() => void loadEducatorDashboard(), 10_000);
     return () => window.clearInterval(timer);
   }, [active, faucetState?.role]);
+
+  useEffect(() => {
+    if (!authenticated || profileStatus !== "ready" || (active !== "home" && active !== "admin")) return;
+    const timer = window.setInterval(() => void loadAttendance(), 10_000);
+    return () => window.clearInterval(timer);
+  }, [authenticated, profileStatus, active]);
 
   useEffect(() => {
     if (active !== "market" || marketCollections.length || marketLoading) return;
@@ -765,6 +780,24 @@ export default function OnchainLab() {
     const requestToken = await campusIdentityToken(); if (!requestToken) return;
     setCohortBusy(true); setCohortError("");
     try { const response = await fetch("/api/cohorts", { method: "POST", headers: { "content-type": "application/json", "privy-id-token": requestToken }, body: JSON.stringify({ action, ...payload }) }); const result = await response.json() as CohortState & { error?: string }; if (!response.ok) throw new Error(result.error ?? "Cohort action failed"); setCohortState(result); if (action === "create") setCohortDraft({ title: "", college: "", expectedStudents: "200" }); if (action === "assign_lesson") setCohortAssignmentDraft((current) => ({ ...current, instructions: "", dueAt: "" })); if (action === "join") { setCohortJoinCode(""); void loadLeague(); } notify(action === "join" ? "Welcome to your Campus cohort" : action === "create" ? "Private cohort opened" : action === "assign_lesson" ? "Lesson assigned to the cohort" : "Cohort settings updated"); } catch (error) { const message = error instanceof Error ? error.message : "Cohort action failed"; setCohortError(message); notify(message); } finally { setCohortBusy(false); }
+  }
+
+  async function loadAttendance() {
+    const requestToken = await campusIdentityToken(); if (!requestToken) return;
+    try { const response = await fetch("/api/attendance", { headers: { "privy-id-token": requestToken } }); const result = await response.json() as AttendanceState & { error?: string }; if (!response.ok) throw new Error(result.error ?? "Attendance is unavailable"); setAttendanceState(result); } catch { /* The next classroom refresh retries quietly. */ }
+  }
+
+  async function attendanceAction(action: "open" | "check_in" | "close", payload: Record<string, unknown>) {
+    const requestToken = await campusIdentityToken(); if (!requestToken) return;
+    setAttendanceBusy(true); setAttendanceError("");
+    try { const response = await fetch("/api/attendance", { method: "POST", headers: { "content-type": "application/json", "privy-id-token": requestToken }, body: JSON.stringify({ action, ...payload }) }); const result = await response.json() as AttendanceState & { error?: string }; if (!response.ok) throw new Error(result.error ?? "Attendance could not be updated"); setAttendanceState(result); if (action === "open") setAttendanceDraft((current) => ({ ...current, title: "" })); if (action === "check_in") setAttendanceCode(""); notify(action === "open" ? "Live check-in opened" : action === "check_in" ? "Attendance verified ✓" : "Attendance check-in closed"); } catch (error) { const message = error instanceof Error ? error.message : "Attendance could not be updated"; setAttendanceError(message); notify(message); } finally { setAttendanceBusy(false); }
+  }
+
+  function exportAttendance(session: AttendanceSession) {
+    const cell = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`;
+    const rows = [["Session", "Cohort", "Name", "Username", "Email", "Checked in at"], ...session.records.map((record) => [session.title, session.cohortTitle, record.displayName ?? "Student", `@${record.username ?? "student"}`, record.email ?? "", record.checkedInAt])];
+    const url = URL.createObjectURL(new Blob([rows.map((row) => row.map(cell).join(",")).join("\n")], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a"); link.href = url; link.download = `${session.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-attendance.csv`; link.click(); URL.revokeObjectURL(url); notify("Attendance roster downloaded");
   }
 
   function exportCohortRoster(cohort: CampusCohort) {
@@ -2314,6 +2347,8 @@ export default function OnchainLab() {
                 </div>
               </section>
 
+              {attendanceState?.prompt && <section className="attendance-checkin card"><div className="attendance-live-mark"><i /> LIVE CHECK-IN</div><div><small>{attendanceState.prompt.host}</small><h3>{attendanceState.prompt.title}</h3><p>Your educator has opened attendance for this room. Enter the code shown in class.</p></div><form onSubmit={(event) => { event.preventDefault(); void attendanceAction("check_in", { code: attendanceCode }); }}><input aria-label="Classroom attendance code" value={attendanceCode} onChange={(event) => { setAttendanceCode(event.target.value.toUpperCase()); setAttendanceError(""); }} placeholder="6-DIGIT CODE" maxLength={6} /><button disabled={attendanceBusy || attendanceCode.length !== 6}>{attendanceBusy ? "Verifying…" : "Check in →"}</button></form>{attendanceError && <span>{attendanceError}</span>}<small>Closes {new Date(attendanceState.prompt.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · tied to your verified Campus profile</small></section>}
+
               <section className="wallet-card card">
                 <div className="section-head"><span><b>CLASSROOM WALLET</b><small>{wallet}</small></span><button onClick={() => copyWalletAddress(activeChain)}>Copy</button></div>
                 <div className="balance"><small>{activeChain === "ethereum" ? "SEPOLIA BALANCE" : "SOLANA DEVNET BALANCE"}</small><strong>{activeChain === "ethereum" ? balance.toFixed(3) : solBalance.toFixed(2)} <span>{activeChain === "ethereum" ? "ETH" : "SOL"}</span></strong><em>{usdPrices ? `≈ ${formatUsd((activeChain === "ethereum" ? balance * usdPrices.ethereum : solBalance * usdPrices.solana))} USD reference` : "Loading USD reference…"}</em><em>Testnet only · not redeemable for USD</em></div>
@@ -2679,6 +2714,7 @@ export default function OnchainLab() {
                 {cohortError && <div className="cohort-admin-error">{cohortError}</div>}
                 <div className="cohort-list">{cohortState?.cohorts.length ? cohortState.cohorts.map((cohort) => <article key={cohort.id} className={cohort.status === "complete" ? "complete" : ""}><header><div><small>{cohort.college}</small><h3>{cohort.title}</h3><p>{cohort.memberCount} of {cohort.expectedStudents} seats · {cohort.status === "complete" ? "Completed" : cohort.enrollmentOpen ? "Enrollment open" : "Enrollment closed"}</p></div><span>{cohort.status}</span></header><div className="cohort-code"><span><small>PRIVATE JOIN CODE</small><b>{cohort.joinCode}</b></span><button onClick={() => navigator.clipboard.writeText(cohort.joinCode ?? "").then(() => notify("Cohort code copied"))}>Copy code</button></div>{Boolean(cohort.assignments.filter((assignment) => assignment.status === "active").length) && <div className="cohort-assignment-list"><small>ASSIGNED LEARNING</small>{cohort.assignments.filter((assignment) => assignment.status === "active").map((assignment) => <div key={assignment.id}><span><b>{assignment.title}</b><small>{assignment.course} · {assignment.dueAt ? `due ${new Date(assignment.dueAt).toLocaleDateString()}` : "no deadline"}</small></span><em>{assignment.completedCount} / {assignment.totalStudents} complete</em><button aria-label={`Archive ${assignment.title}`} onClick={() => void cohortAction("archive_assignment", { cohortId: cohort.id, assignmentId: assignment.id })}>×</button></div>)}</div>}<div className="cohort-actions"><button disabled={cohort.status === "complete" || cohortBusy} onClick={() => void cohortAction("set_enrollment", { cohortId: cohort.id, enrollmentOpen: !cohort.enrollmentOpen })}>{cohort.enrollmentOpen ? "Close enrollment" : "Open enrollment"}</button><button onClick={() => exportCohortRoster(cohort)}>Export roster CSV</button><button disabled={cohort.status === "complete" || cohortBusy} onClick={() => void cohortAction("complete", { cohortId: cohort.id })}>Complete batch</button></div><details><summary>View student roster <span>{cohort.memberCount}</span></summary>{cohort.roster.length ? <div className="cohort-roster"><div><b>Student</b><b>Wallets</b><b>Lessons</b></div>{cohort.roster.map((student) => <div key={student.id}><span><b>{student.displayName}</b><small>@{student.username} · {student.email}</small></span><span>{student.ethereumAddress ? "ETH ✓" : "ETH —"} · {student.solanaAddress ? "SOL ✓" : "SOL —"}</span><span>{student.lessonsCompleted} / 25</span></div>)}</div> : <p className="cohort-empty">Share the private code when you are ready to admit students.</p>}</details></article>) : <div className="cohort-empty-state"><b>No cohort created yet.</b><span>Create your first private batch above. Existing Campus access remains open until then.</span></div>}</div>
               </section>
+              <section className="attendance-admin card"><div className="section-head"><span><b>LIVE SESSION ATTENDANCE</b><small>Open a timed check-in and verify who is physically in the room</small></span><em>{attendanceState?.sessions.filter((session) => session.status === "open" && Date.parse(session.expiresAt) > Date.now()).length ?? 0} live</em></div><form onSubmit={(event) => { event.preventDefault(); void attendanceAction("open", attendanceDraft); }}><label>Cohort<select required value={attendanceDraft.cohortId} onChange={(event) => setAttendanceDraft((current) => ({ ...current, cohortId: event.target.value }))}><option value="">Choose batch</option>{cohortState?.cohorts.filter((cohort) => cohort.status === "active").map((cohort) => <option key={cohort.id} value={cohort.id}>{cohort.title}</option>)}</select></label><label>Session title<input required value={attendanceDraft.title} onChange={(event) => setAttendanceDraft((current) => ({ ...current, title: event.target.value }))} placeholder="Ethereum + blockchain use cases" /></label><label>Guest / host<input value={attendanceDraft.host} onChange={(event) => setAttendanceDraft((current) => ({ ...current, host: event.target.value }))} placeholder="Faceless × Partner" /></label><label>Check-in window<select value={attendanceDraft.durationMinutes} onChange={(event) => setAttendanceDraft((current) => ({ ...current, durationMinutes: event.target.value }))}><option value="10">10 minutes</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">1 hour</option></select></label><button disabled={attendanceBusy || !attendanceDraft.cohortId}>{attendanceBusy ? "Opening…" : "Open live check-in →"}</button></form>{attendanceError && <div className="cohort-admin-error">{attendanceError}</div>}<div className="attendance-session-list">{attendanceState?.sessions.length ? attendanceState.sessions.slice(0, 8).map((session) => { const live = session.status === "open" && Date.parse(session.expiresAt) > Date.now(); return <article key={session.id} className={live ? "live" : ""}><header><span><small>{session.cohortTitle} · {session.host}</small><b>{session.title}</b><em>{new Date(session.openedAt).toLocaleString()}</em></span>{live ? <div><small>CLASSROOM CODE</small><strong>{session.checkInCode}</strong></div> : <i>CLOSED</i>}</header><div className="attendance-session-stats"><span><strong>{session.attendanceCount}</strong><small>verified students</small></span><button onClick={() => exportAttendance(session)} disabled={!session.records.length}>Export CSV</button>{live && <button onClick={() => void attendanceAction("close", { sessionId: session.id })} disabled={attendanceBusy}>Close check-in</button>}</div><details><summary>View attendance roster <b>{session.attendanceCount}</b></summary>{session.records.length ? <div>{session.records.map((record) => <p key={record.id}><span><b>{record.displayName}</b><small>@{record.username} · {record.email}</small></span><time>{new Date(record.checkedInAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time></p>)}</div> : <small>No students have checked in yet.</small>}</details></article>; }) : <div className="attendance-empty"><b>No attendance sessions yet.</b><span>Open one when students are in the room. The code expires automatically.</span></div>}</div></section>
               <div className="command-metrics">
                 <article><small>ACTIVE STUDENTS</small><strong>{educatorDashboard?.metrics.activeStudents ?? 0}</strong><span>verified profiles</span></article>
                 <article><small>BOTH WALLETS READY</small><strong>{educatorDashboard?.metrics.bothWallets ?? 0}</strong><span>Ethereum + Solana</span></article>

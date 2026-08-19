@@ -469,6 +469,29 @@ export const creatorProjects = sqliteTable("creator_projects", {
   index("idx_creator_projects_user_status").on(table.userId, table.status),
 ]);
 
+export const builderProjects = sqliteTable("builder_projects", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  chain: text("chain", { enum: ["ethereum", "solana", "multichain"] }).notNull().default("ethereum"),
+  useCase: text("use_case").notNull().default("other"),
+  problem: text("problem").notNull(),
+  audience: text("audience").notNull(),
+  solution: text("solution").notNull(),
+  milestones: text("milestones").notNull().default("[]"),
+  contractReference: text("contract_reference"),
+  demoUrl: text("demo_url"),
+  status: text("status", { enum: ["draft", "building", "submitted", "changes_requested", "verified"] }).notNull().default("draft"),
+  reviewNotes: text("review_notes"),
+  reviewedBy: text("reviewed_by").references(() => users.id),
+  reviewedAt: text("reviewed_at"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_builder_projects_user_time").on(table.userId, table.updatedAt),
+  index("idx_builder_projects_status_time").on(table.status, table.updatedAt),
+]);
+
 export const payouts = sqliteTable("payouts", {
   id: text("id").primaryKey(),
   submissionId: text("submission_id").notNull().references(() => campaignSubmissions.id, { onDelete: "cascade" }),

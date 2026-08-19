@@ -183,6 +183,13 @@
       "when": 1787105459682,
       "tag": "0025_smooth_jack_power",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1787106179055,
+      "tag": "0026_damp_northstar",
+      "breakpoints": true
     }
   ]
 }

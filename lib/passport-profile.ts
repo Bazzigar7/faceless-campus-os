@@ -3,6 +3,7 @@ import { getDb } from "../db";
 import {
   attendanceRecords,
   attendanceSessions,
+  builderProjects,
   campaignSubmissions,
   campaigns,
   classroomSessionActivity,
@@ -24,7 +25,7 @@ const DEFAULT_HEADLINE = "Blockchain learner · Onchain builder · Creator";
 
 export async function getPassportByUserId(userId: string) {
   const db = getDb();
-  const [[student], [settings], membership, walletRows, lessons, attendance, activities, launches, tokens, claims, submissions, paymentRows] = await Promise.all([
+  const [[student], [settings], membership, walletRows, lessons, attendance, activities, launches, tokens, claims, submissions, paymentRows, verifiedProjects] = await Promise.all([
     db.select({ id: users.id, username: users.username, displayName: users.displayName, createdAt: users.createdAt }).from(users).where(eq(users.id, userId)).limit(1),
     db.select().from(passportProfiles).where(eq(passportProfiles.userId, userId)).limit(1),
     db.select().from(cohortMembers).where(eq(cohortMembers.userId, userId)).limit(1),
@@ -37,6 +38,7 @@ export async function getPassportByUserId(userId: string) {
     db.select().from(partnerDropClaims).where(eq(partnerDropClaims.userId, userId)).orderBy(desc(partnerDropClaims.claimedAt)),
     db.select().from(campaignSubmissions).where(eq(campaignSubmissions.userId, userId)).orderBy(desc(campaignSubmissions.submittedAt)),
     db.select({ amount: payouts.amount, currency: payouts.currency, status: payouts.status, paidAt: payouts.paidAt }).from(payouts).where(eq(payouts.userId, userId)).orderBy(desc(payouts.paidAt)),
+    db.select().from(builderProjects).where(and(eq(builderProjects.userId, userId), eq(builderProjects.status, "verified"))).orderBy(desc(builderProjects.reviewedAt)),
   ]);
   if (!student) return null;
 
@@ -79,7 +81,7 @@ export async function getPassportByUserId(userId: string) {
       attendanceCount: attendance.length,
       credentials: claims.length,
       classroomProofs: activities.length,
-      assetsBuilt: deployedLaunches.length + deployedTokens.length,
+      assetsBuilt: deployedLaunches.length + deployedTokens.length + verifiedProjects.length,
       approvedCampaigns: approvedSubmissions.length,
       paidCampaigns: submissions.filter((row) => row.status === "paid").length,
     },
@@ -91,6 +93,7 @@ export async function getPassportByUserId(userId: string) {
       builds: [
         ...deployedLaunches.map((row) => ({ title: row.name, kind: "NFT collection", chain: row.chain, reference: row.contractAddress ?? row.assetAddress, earnedAt: row.updatedAt })),
         ...deployedTokens.map((row) => ({ title: row.name, kind: "Token", chain: row.chain, reference: row.tokenAddress, earnedAt: row.updatedAt })),
+        ...verifiedProjects.map((row) => ({ title: row.title, kind: "Verified Campus project", chain: row.chain, reference: row.demoUrl ?? row.contractReference, earnedAt: row.reviewedAt ?? row.updatedAt })),
       ].slice(0, 12),
       campaigns: approvedSubmissions.slice(0, 12).map((row) => ({ title: campaignMap.get(row.campaignId)?.title ?? "Creator campaign", brand: campaignMap.get(row.campaignId)?.brand ?? "Faceless Partner", status: row.status, earnedAt: row.reviewedAt ?? row.submittedAt })),
     },
@@ -101,6 +104,7 @@ export async function getPassportByUserId(userId: string) {
       activities.length ? "Onchain builder" : null,
       deployedLaunches.length ? "NFT creator" : null,
       deployedTokens.length ? "Token launcher" : null,
+      verifiedProjects.length ? "Verified project builder" : null,
       approvedSubmissions.length ? "Campaign creator" : null,
       claims.length ? "Ecosystem participant" : null,
     ].filter(Boolean),

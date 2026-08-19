@@ -302,3 +302,22 @@ test("Proof Passport is private by default and publishes only verified work", as
   assert.match(schema, /passport_profiles/);
   assert.match(schema, /idx_passport_profiles_slug/);
 });
+
+test("Project Studio saves blockchain builds and requires educator verification", async () => {
+  const [client, route, passport, schema] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/builder-projects/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/passport-profile.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /PERSISTENT PROJECT STUDIO/);
+  assert.match(client, /BUILD MILESTONES/);
+  assert.match(client, /Request verification/);
+  assert.match(client, /ONCHAIN PROJECT VERIFICATION/);
+  assert.match(route, /Complete all four build milestones/);
+  assert.match(route, /Add a working demo link or testnet contract reference/);
+  assert.match(route, /Only the Campus OS owner can verify student builds/);
+  assert.match(passport, /Verified Campus project/);
+  assert.match(schema, /builder_projects/);
+  assert.match(schema, /idx_builder_projects_status_time/);
+});

@@ -1,12 +1,12 @@
 import { eq } from "drizzle-orm";
 import {
-  campaignSubmissions, classroomSessionActivity, cohortMembers, faucetClaims, lessonProgress, marketPurchases,
+  builderProjects, campaignSubmissions, classroomSessionActivity, cohortMembers, faucetClaims, lessonProgress, marketPurchases,
   partnerDropClaims, rwaTrades, testnetLaunches, testnetTokens, tokenAirdropClaims, tokenTransfers, users,
 } from "../../../db/schema";
 import { faucetError, requireCampusUser } from "../../../lib/faucet-auth";
 
-const points = { lesson: 20, liveQuest: 50, faucet: 10, transfer: 25, nft: 40, token: 75, rwa: 30, campaign: 100, partnerDrop: 60, airdrop: 25 };
-const caps = { lesson: 25, liveQuest: 20, faucet: 3, transfer: 5, nft: 5, token: 3, rwa: 10, campaign: 10, partnerDrop: 10, airdrop: 5 };
+const points = { lesson: 20, liveQuest: 50, faucet: 10, transfer: 25, nft: 40, token: 75, rwa: 30, campaign: 100, partnerDrop: 60, airdrop: 25, verifiedProject: 150 };
+const caps = { lesson: 25, liveQuest: 20, faucet: 3, transfer: 5, nft: 5, token: 3, rwa: 10, campaign: 10, partnerDrop: 10, airdrop: 5, verifiedProject: 5 };
 
 function levelFor(xp: number) {
   if (xp >= 1_000) return { level: 5, name: "Onchain Operator", nextAt: 1_500 };
@@ -19,7 +19,7 @@ function levelFor(xp: number) {
 export async function GET(request: Request) {
   try {
     const { db, student } = await requireCampusUser(request);
-    const [studentRows, memberRows, lessonRows, sessionRows, faucetRows, transferRows, purchaseRows, launchRows, tokenRows, rwaRows, campaignRows, dropRows, airdropRows] = await Promise.all([
+    const [studentRows, memberRows, lessonRows, sessionRows, faucetRows, transferRows, purchaseRows, launchRows, tokenRows, rwaRows, campaignRows, dropRows, airdropRows, projectRows] = await Promise.all([
       db.select().from(users).where(eq(users.status, "active")),
       db.select().from(cohortMembers),
       db.select().from(lessonProgress),
@@ -33,6 +33,7 @@ export async function GET(request: Request) {
       db.select().from(campaignSubmissions),
       db.select().from(partnerDropClaims),
       db.select().from(tokenAirdropClaims),
+      db.select().from(builderProjects),
     ]);
     const recordFor = (userId: string) => {
       const breakdown = {
@@ -46,9 +47,10 @@ export async function GET(request: Request) {
         campaigns: campaignRows.filter((row) => row.userId === userId && (row.status === "approved_for_payment" || row.status === "paid")).length,
         partnerDrops: dropRows.filter((row) => row.userId === userId).length,
         airdrops: airdropRows.filter((row) => row.userId === userId && row.status === "sent").length,
+        verifiedProjects: projectRows.filter((row) => row.userId === userId && row.status === "verified").length,
       };
-      const xp = Math.min(breakdown.lessons, caps.lesson) * points.lesson + Math.min(breakdown.liveQuests, caps.liveQuest) * points.liveQuest + Math.min(breakdown.faucetClaims, caps.faucet) * points.faucet + Math.min(breakdown.tokenTransfers, caps.transfer) * points.transfer + Math.min(breakdown.nftMints, caps.nft) * points.nft + Math.min(breakdown.tokenLaunches, caps.token) * points.token + Math.min(breakdown.rwaTrades, caps.rwa) * points.rwa + Math.min(breakdown.campaigns, caps.campaign) * points.campaign + Math.min(breakdown.partnerDrops, caps.partnerDrop) * points.partnerDrop + Math.min(breakdown.airdrops, caps.airdrop) * points.airdrop;
-      const badges = [breakdown.lessons >= 1 && "Lesson Starter", breakdown.liveQuests >= 1 && "Live Quest", breakdown.tokenTransfers >= 1 && "Token Sender", breakdown.nftMints >= 1 && "NFT Collector", breakdown.tokenLaunches >= 1 && "Token Launcher", breakdown.rwaTrades >= 1 && "RWA Analyst", breakdown.campaigns >= 1 && "Creator Earned", breakdown.partnerDrops >= 1 && "Partner Proof"].filter(Boolean) as string[];
+      const xp = Math.min(breakdown.lessons, caps.lesson) * points.lesson + Math.min(breakdown.liveQuests, caps.liveQuest) * points.liveQuest + Math.min(breakdown.faucetClaims, caps.faucet) * points.faucet + Math.min(breakdown.tokenTransfers, caps.transfer) * points.transfer + Math.min(breakdown.nftMints, caps.nft) * points.nft + Math.min(breakdown.tokenLaunches, caps.token) * points.token + Math.min(breakdown.rwaTrades, caps.rwa) * points.rwa + Math.min(breakdown.campaigns, caps.campaign) * points.campaign + Math.min(breakdown.partnerDrops, caps.partnerDrop) * points.partnerDrop + Math.min(breakdown.airdrops, caps.airdrop) * points.airdrop + Math.min(breakdown.verifiedProjects, caps.verifiedProject) * points.verifiedProject;
+      const badges = [breakdown.lessons >= 1 && "Lesson Starter", breakdown.liveQuests >= 1 && "Live Quest", breakdown.tokenTransfers >= 1 && "Token Sender", breakdown.nftMints >= 1 && "NFT Collector", breakdown.tokenLaunches >= 1 && "Token Launcher", breakdown.rwaTrades >= 1 && "RWA Analyst", breakdown.campaigns >= 1 && "Creator Earned", breakdown.partnerDrops >= 1 && "Partner Proof", breakdown.verifiedProjects >= 1 && "Verified Builder"].filter(Boolean) as string[];
       return { xp, breakdown, badges, ...levelFor(xp) };
     };
     const ownMembership = memberRows.find((member) => member.userId === student.id);
@@ -63,6 +65,7 @@ export async function GET(request: Request) {
       { id: "nft", title: "Mint a testnet NFT", xp: points.nft, done: own.breakdown.nftMints > 0, destination: "market" },
       { id: "rwa", title: "Make an RWA practice trade", xp: points.rwa, done: own.breakdown.rwaTrades > 0, destination: "market" },
       { id: "drop", title: "Claim a verified Partner Drop", xp: points.partnerDrop, done: own.breakdown.partnerDrops > 0, destination: "drops" },
+      { id: "project", title: "Ship a verified Campus project", xp: points.verifiedProject, done: own.breakdown.verifiedProjects > 0, destination: "create" },
     ];
     return Response.json({ own: { ...own, rank: ownRank >= 0 ? ownRank + 1 : null }, leaderboard: ranked.slice(0, 20).map((row, index) => ({ ...row, rank: index + 1 })), missions, scoring: points, caps }, { headers: { "cache-control": "no-store" } });
   } catch (error) { return faucetError(error); }

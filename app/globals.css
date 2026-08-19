@@ -313,6 +313,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 
 /* Verified partner drops */
 .drop-description { display: block; min-height: 34px; margin: 9px 0 13px; color: var(--muted); font-size: 8px; line-height: 1.55; }
+.drop-reward { width: fit-content; display: block; margin-top: 8px; padding: 6px 8px; border-radius: 999px; background: #f1eff7; color: #686674; font-size: 6px; font-weight: 900; letter-spacing: .08em; }
+.drop-reward.token_airdrop { background: #e9f9f2; color: #158a64; }.drop-reward.nft_mint { background: #f0ebff; color: var(--violet); }
 .drop-card button:disabled { cursor: default; opacity: .55; }
 .partner-credential-strip { padding: 20px; border-color: #d8cffb; background: linear-gradient(135deg,#fbfaff,#fff); }
 .partner-credential-strip > div:last-child { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; margin-top: 15px; }
@@ -331,5 +333,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .partner-drop-admin textarea { height: 65px; padding: 10px; resize: vertical; }
 .partner-drop-admin form > button { min-height: 40px; border: 0; border-radius: 8px; background: var(--violet); color: white; font-size: 8px; font-weight: 900; }
 .partner-drop-admin form > button:disabled { opacity: .5; }
+.partner-drop-admin > footer { display: flex; gap: 10px; align-items: center; margin-top: 14px; padding: 11px 13px; border-radius: 9px; background: #f6f4fc; color: var(--muted); font-size: 7px; line-height: 1.5; }
+.partner-drop-admin > footer b { flex: 0 0 auto; color: var(--violet); font-size: 7px; letter-spacing: .06em; text-transform: uppercase; }
 @media (max-width: 900px) { .partner-drop-admin form { grid-template-columns: 1fr 1fr; }.partner-drop-admin label.wide { grid-column: span 2; }.partner-drop-admin form > button { grid-column: span 2; } }
 @media (max-width: 760px) { .partner-credential-strip > div:last-child,.partner-drop-admin form { grid-template-columns: 1fr; }.partner-drop-admin label.wide,.partner-drop-admin form > button { grid-column: auto; } }

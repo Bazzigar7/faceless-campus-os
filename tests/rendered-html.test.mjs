@@ -171,6 +171,11 @@ test("partner drops create verified classroom credentials", async () => {
   assert.match(client, /Verify & claim/);
   assert.match(route, /Complete a verified live classroom quest/);
   assert.match(route, /Approved creator campaign/);
+  assert.match(client, /Open token reward/);
+  assert.match(client, /Mint collectible/);
+  assert.match(route, /Choose an open classroom token airdrop/);
+  assert.match(route, /Choose a collection with a public testnet mint/);
   assert.match(schema, /partner_drops/);
+  assert.match(schema, /reward_kind/);
   assert.match(schema, /idx_partner_drop_claims_drop_user/);
 });

@@ -411,6 +411,8 @@ export const partnerDrops = sqliteTable("partner_drops", {
   host: text("host").notNull(),
   description: text("description").notNull(),
   rewardLabel: text("reward_label").notNull().default("Campus credential"),
+  rewardKind: text("reward_kind", { enum: ["credential", "token_airdrop", "nft_mint"] }).notNull().default("credential"),
+  rewardAssetId: text("reward_asset_id"),
   eligibility: text("eligibility", { enum: ["open", "live_quest", "lesson", "campaign"] }).notNull().default("open"),
   maxClaims: integer("max_claims").notNull().default(200),
   status: text("status", { enum: ["draft", "live", "closed"] }).notNull().default("live"),

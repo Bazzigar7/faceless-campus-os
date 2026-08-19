@@ -222,6 +222,7 @@ type CohortState = { role: "student" | "educator" | "owner"; gateEnabled: boolea
 type AttendanceRecord = { id: string; userId?: string; sessionId?: string; username?: string; displayName?: string; email?: string; checkedInAt: string; title?: string; host?: string; openedAt?: string };
 type AttendanceSession = { id: string; cohortId: string; cohortTitle: string; title: string; host: string; checkInCode: string; status: "open" | "closed"; expiresAt: string; openedAt: string; closedAt: string | null; attendanceCount: number; records: AttendanceRecord[] };
 type AttendanceState = { role: "student" | "educator" | "owner"; prompt: { id: string; title: string; host: string; expiresAt: string } | null; ownRecords: AttendanceRecord[]; sessions: AttendanceSession[] };
+type PassportState = { settings: { id: string | null; shareSlug: string | null; isPublic: boolean; headline: string; bio: string; sharePath: string | null }; metrics: { lessonsCompleted: number; attendanceCount: number; credentials: number; classroomProofs: number; assetsBuilt: number; approvedCampaigns: number; paidCampaigns: number } };
 type EducatorDashboard = {
   metrics: { activeStudents: number; bothWallets: number; lessonsCompleted: number; onchainActions: number; nftCollections: number; tokens: number; rwas: number; openAirdrops: number };
   roster: Array<{ id: string; username: string; displayName: string; email: string; ethereumReady: boolean; solanaReady: boolean; lessonsCompleted: number; ethFunded: boolean; solFunded: boolean; assetsCreated: number; issues: string[]; sessionStatus: ClassroomActivity["status"] | null; proofLabel: string | null }>;
@@ -432,6 +433,10 @@ export default function OnchainLab() {
   const [attendanceBusy, setAttendanceBusy] = useState(false);
   const [attendanceError, setAttendanceError] = useState("");
   const [attendanceDraft, setAttendanceDraft] = useState({ cohortId: "", title: "", host: "Faceless", durationMinutes: "15" });
+  const [passportState, setPassportState] = useState<PassportState | null>(null);
+  const [passportDraft, setPassportDraft] = useState({ headline: "Blockchain learner · Onchain builder · Creator", bio: "" });
+  const [passportBusy, setPassportBusy] = useState(false);
+  const [passportError, setPassportError] = useState("");
   const [artPreview, setArtPreview] = useState<string | null>(null);
   const [selectedCourse, setSelectedCourse] = useState<Course>("ethereum");
   const [selectedLesson, setSelectedLesson] = useState<Lesson>(ethereumLessons[1]);
@@ -594,6 +599,7 @@ export default function OnchainLab() {
     void loadCreatorProjects();
     void loadCohorts();
     void loadAttendance();
+    void loadPassport();
   }, [authenticated, identityToken, profileStatus]);
 
   useEffect(() => {
@@ -791,6 +797,23 @@ export default function OnchainLab() {
     const requestToken = await campusIdentityToken(); if (!requestToken) return;
     setAttendanceBusy(true); setAttendanceError("");
     try { const response = await fetch("/api/attendance", { method: "POST", headers: { "content-type": "application/json", "privy-id-token": requestToken }, body: JSON.stringify({ action, ...payload }) }); const result = await response.json() as AttendanceState & { error?: string }; if (!response.ok) throw new Error(result.error ?? "Attendance could not be updated"); setAttendanceState(result); if (action === "open") setAttendanceDraft((current) => ({ ...current, title: "" })); if (action === "check_in") setAttendanceCode(""); notify(action === "open" ? "Live check-in opened" : action === "check_in" ? "Attendance verified ✓" : "Attendance check-in closed"); } catch (error) { const message = error instanceof Error ? error.message : "Attendance could not be updated"; setAttendanceError(message); notify(message); } finally { setAttendanceBusy(false); }
+  }
+
+  async function loadPassport() {
+    const requestToken = await campusIdentityToken(); if (!requestToken) return;
+    try { const response = await fetch("/api/passport", { headers: { "privy-id-token": requestToken } }); const result = await response.json() as PassportState & { error?: string }; if (!response.ok) throw new Error(result.error ?? "Proof Passport is unavailable"); setPassportState(result); setPassportDraft({ headline: result.settings.headline, bio: result.settings.bio }); } catch { /* Passport can retry when the student opens it. */ }
+  }
+
+  async function passportAction(action: "save" | "rotate" | "unpublish", payload: Record<string, unknown> = {}) {
+    const requestToken = await campusIdentityToken(); if (!requestToken) return;
+    setPassportBusy(true); setPassportError("");
+    try { const response = await fetch("/api/passport", { method: "POST", headers: { "content-type": "application/json", "privy-id-token": requestToken }, body: JSON.stringify({ action, ...payload }) }); const result = await response.json() as PassportState & { error?: string }; if (!response.ok) throw new Error(result.error ?? "Proof Passport could not be updated"); setPassportState(result); setPassportDraft({ headline: result.settings.headline, bio: result.settings.bio }); notify(action === "unpublish" ? "Proof Passport is private again" : action === "rotate" ? "A new private share link was created" : result.settings.isPublic ? "Proof Passport published" : "Passport details saved"); } catch (error) { setPassportError(error instanceof Error ? error.message : "Proof Passport could not be updated"); } finally { setPassportBusy(false); }
+  }
+
+  async function copyPassportLink() {
+    if (!passportState?.settings.sharePath) return;
+    await navigator.clipboard.writeText(`${window.location.origin}${passportState.settings.sharePath}`);
+    notify("Public Proof Passport link copied");
   }
 
   function exportAttendance(session: AttendanceSession) {
@@ -2682,9 +2705,13 @@ export default function OnchainLab() {
                 <div className="passport-identity"><span className="profile-dot large">{initials}</span><div><span className="eyebrow">FACELESS STUDENT PASSPORT</span><h2>{displayName}</h2><p>Creator · Builder · {cohortState?.membership?.title ?? "Campus member"}</p></div></div>
                 <div className="passport-wallet"><small>MULTICHAIN CLASSROOM IDENTITY</small>{campusUsername && <strong>@{campusUsername}</strong>}<strong>{ethWallet}</strong><strong>{solWallet}</strong><span><i /> Sepolia + Solana Devnet ready</span></div>
               </section>
+              <section className="passport-publish card">
+                <div><span className="eyebrow">PUBLISH YOUR PROOF PASSPORT</span><h3>Turn Campus progress into a portfolio link.</h3><p>Share verified lessons, live attendance, onchain builds, partner credentials and approved creator work. Your Passport stays private until you publish it.</p><form onSubmit={(event) => { event.preventDefault(); void passportAction("save", { ...passportDraft, isPublic: passportState?.settings.isPublic ?? false }); }}><label>One-line introduction<input maxLength={100} value={passportDraft.headline} onChange={(event) => setPassportDraft((current) => ({ ...current, headline: event.target.value }))} /></label><label>Short bio · optional<textarea maxLength={400} value={passportDraft.bio} onChange={(event) => setPassportDraft((current) => ({ ...current, bio: event.target.value }))} placeholder="What are you learning, building or creating?" /></label><div className="passport-publish-actions"><button disabled={passportBusy}>Save profile</button>{passportState?.settings.isPublic ? <><button className="primary" type="button" onClick={copyPassportLink}>Copy public link</button><button type="button" onClick={() => window.open(passportState.settings.sharePath ?? "", "_blank")}>Open public view ↗</button><button type="button" onClick={() => void passportAction("rotate")}>Regenerate link</button><button className="danger" type="button" onClick={() => void passportAction("unpublish")}>Make private</button></> : <button className="primary" type="button" disabled={passportBusy} onClick={() => void passportAction("save", { ...passportDraft, isPublic: true })}>Publish Passport →</button>}</div>{passportError && <span className="passport-publish-error">{passportError}</span>}</form></div>
+                <aside className="passport-share-status"><span className={passportState?.settings.isPublic ? "public" : ""}>{passportState?.settings.isPublic ? "● PUBLIC" : "● PRIVATE BY DEFAULT"}</span><strong>{passportState?.settings.isPublic ? "Ready to share with clubs, projects and collaborators." : "Only you can see this page right now."}</strong>{passportState?.settings.sharePath && <code>{passportState.settings.sharePath}</code>}<p>No email, private keys or payment details are included. Only public wallet addresses and earned Campus proofs appear.</p><small>Regenerating the link immediately invalidates the previous one.</small></aside>
+              </section>
               {classroomProofs.length > 0 && <section className="classroom-proof-strip card"><div className="section-head"><span><b>VERIFIED CLASSROOM PROOFS</b><small>Permanent records earned through live Campus quests</small></span><em>{classroomProofs.length}</em></div><div>{classroomProofs.slice(0, 4).map((proof) => <article key={proof.id}><span>✓</span><div><small>{new Date(proof.completedAt).toLocaleDateString()}</small><b>{proof.title}</b><p>{proof.proofLabel}</p></div></article>)}</div></section>}
               {Boolean(dropState?.credentials.length) && <section className="partner-credential-strip card"><div className="section-head"><span><b>PARTNER CREDENTIALS</b><small>Guest sessions, ecosystem activations and completed challenges</small></span></div><div>{dropState?.credentials.slice(0, 4).map((credential) => <article key={credential.id}><MaskOrb compact /><span><small>{new Date(credential.claimedAt).toLocaleDateString()} · {credential.drop?.host}</small><b>{credential.drop?.title}</b><p>{credential.evidence}</p></span></article>)}</div></section>}
-              <div className="passport-metrics"><article><strong>{classroomProofs.length.toString().padStart(2, "0")}</strong><span>Verified quests</span></article><article><strong>{completed.toString().padStart(2, "0")}</strong><span>Lessons completed</span></article><article><strong>{campaignState?.campaigns.filter((item) => item.joined).length.toString().padStart(2, "0") ?? "00"}</strong><span>Campaigns joined</span></article><article><strong>{dropState?.credentials.length.toString().padStart(2, "0") ?? "00"}</strong><span>Partner drops</span></article></div>
+              <div className="passport-metrics"><article><strong>{(passportState?.metrics.classroomProofs ?? classroomProofs.length).toString().padStart(2, "0")}</strong><span>Verified quests</span></article><article><strong>{(passportState?.metrics.lessonsCompleted ?? completed).toString().padStart(2, "0")}</strong><span>Lessons completed</span></article><article><strong>{(passportState?.metrics.approvedCampaigns ?? 0).toString().padStart(2, "0")}</strong><span>Approved campaigns</span></article><article><strong>{(passportState?.metrics.credentials ?? dropState?.credentials.length ?? 0).toString().padStart(2, "0")}</strong><span>Partner proofs</span></article></div>
               <div className="passport-layout">
                 <section className="card passport-timeline"><div className="section-head"><span><b>PROOF OF PROGRESS</b><small>Learning, building and creating in one record</small></span></div>{[
                   ["Ethereum foundations", "Completed the introductory lesson and knowledge check", "LEARN"],

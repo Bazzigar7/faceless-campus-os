@@ -279,3 +279,26 @@ test("creator workspace saves guidance-first shoot plans", async () => {
   assert.match(schema, /review_status/);
   assert.match(schema, /idx_creator_projects_user_time/);
 });
+
+test("Proof Passport is private by default and publishes only verified work", async () => {
+  const [client, route, publicPage, helper, schema] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/passport/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/passport/[slug]/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/passport-profile.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /PUBLISH YOUR PROOF PASSPORT/);
+  assert.match(client, /PRIVATE BY DEFAULT/);
+  assert.match(client, /No email, private keys or payment details/);
+  assert.match(client, /Regenerate link/);
+  assert.match(route, /"save" \| "rotate" \| "unpublish"/);
+  assert.match(route, /isPublic: body\.isPublic === true/);
+  assert.match(publicPage, /Earned, not self-declared/);
+  assert.match(publicPage, /images: \[\]/);
+  assert.match(publicPage, /No wallet controls, private keys, email or payment details/);
+  assert.match(helper, /approved_for_payment/);
+  assert.match(helper, /status === "deployed"/);
+  assert.match(schema, /passport_profiles/);
+  assert.match(schema, /idx_passport_profiles_slug/);
+});

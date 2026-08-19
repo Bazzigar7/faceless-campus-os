@@ -34,6 +34,21 @@ export const wallets = sqliteTable("wallets", {
   index("idx_wallets_user_primary").on(table.userId, table.isPrimary),
 ]);
 
+export const passportProfiles = sqliteTable("passport_profiles", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  shareSlug: text("share_slug").notNull(),
+  isPublic: integer("is_public", { mode: "boolean" }).notNull().default(false),
+  headline: text("headline").notNull().default("Blockchain learner · Onchain builder · Creator"),
+  bio: text("bio").notNull().default(""),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_passport_profiles_user").on(table.userId),
+  uniqueIndex("idx_passport_profiles_slug").on(table.shareSlug),
+  index("idx_passport_profiles_public_time").on(table.isPublic, table.updatedAt),
+]);
+
 export const cohorts = sqliteTable("cohorts", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),

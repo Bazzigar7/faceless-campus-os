@@ -176,6 +176,13 @@
       "when": 1787104261483,
       "tag": "0024_high_tiger_shark",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1787105459682,
+      "tag": "0025_smooth_jack_power",
+      "breakpoints": true
     }
   ]
 }

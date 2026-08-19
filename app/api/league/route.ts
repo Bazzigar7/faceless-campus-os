@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import {
-  campaignSubmissions, classroomSessionActivity, faucetClaims, lessonProgress, marketPurchases,
+  campaignSubmissions, classroomSessionActivity, cohortMembers, faucetClaims, lessonProgress, marketPurchases,
   partnerDropClaims, rwaTrades, testnetLaunches, testnetTokens, tokenAirdropClaims, tokenTransfers, users,
 } from "../../../db/schema";
 import { faucetError, requireCampusUser } from "../../../lib/faucet-auth";
@@ -19,8 +19,9 @@ function levelFor(xp: number) {
 export async function GET(request: Request) {
   try {
     const { db, student } = await requireCampusUser(request);
-    const [studentRows, lessonRows, sessionRows, faucetRows, transferRows, purchaseRows, launchRows, tokenRows, rwaRows, campaignRows, dropRows, airdropRows] = await Promise.all([
+    const [studentRows, memberRows, lessonRows, sessionRows, faucetRows, transferRows, purchaseRows, launchRows, tokenRows, rwaRows, campaignRows, dropRows, airdropRows] = await Promise.all([
       db.select().from(users).where(eq(users.status, "active")),
+      db.select().from(cohortMembers),
       db.select().from(lessonProgress),
       db.select().from(classroomSessionActivity),
       db.select().from(faucetClaims),
@@ -50,7 +51,9 @@ export async function GET(request: Request) {
       const badges = [breakdown.lessons >= 1 && "Lesson Starter", breakdown.liveQuests >= 1 && "Live Quest", breakdown.tokenTransfers >= 1 && "Token Sender", breakdown.nftMints >= 1 && "NFT Collector", breakdown.tokenLaunches >= 1 && "Token Launcher", breakdown.rwaTrades >= 1 && "RWA Analyst", breakdown.campaigns >= 1 && "Creator Earned", breakdown.partnerDrops >= 1 && "Partner Proof"].filter(Boolean) as string[];
       return { xp, breakdown, badges, ...levelFor(xp) };
     };
-    const ranked = studentRows.filter((row) => row.role !== "owner").map((row) => ({ id: row.id, username: row.username, displayName: row.displayName, ...recordFor(row.id) })).sort((a, b) => b.xp - a.xp || a.username.localeCompare(b.username));
+    const ownMembership = memberRows.find((member) => member.userId === student.id);
+    const cohortUserIds = ownMembership ? new Set(memberRows.filter((member) => member.cohortId === ownMembership.cohortId).map((member) => member.userId)) : null;
+    const ranked = studentRows.filter((row) => row.role !== "owner" && (!cohortUserIds || cohortUserIds.has(row.id))).map((row) => ({ id: row.id, username: row.username, displayName: row.displayName, ...recordFor(row.id) })).sort((a, b) => b.xp - a.xp || a.username.localeCompare(b.username));
     const own = recordFor(student.id);
     const ownRank = ranked.findIndex((row) => row.id === student.id);
     const missions = [

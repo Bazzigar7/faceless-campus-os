@@ -38,10 +38,12 @@ export const cohorts = sqliteTable("cohorts", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
   college: text("college").notNull(),
+  joinCode: text("join_code"),
   expectedStudents: integer("expected_students").notNull().default(200),
+  enrollmentOpen: integer("enrollment_open", { mode: "boolean" }).notNull().default(true),
   status: text("status", { enum: ["draft", "active", "complete"] }).notNull().default("draft"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-});
+}, (table) => [uniqueIndex("idx_cohorts_join_code").on(table.joinCode)]);
 
 export const cohortMembers = sqliteTable("cohort_members", {
   id: text("id").primaryKey(),
@@ -50,7 +52,7 @@ export const cohortMembers = sqliteTable("cohort_members", {
   joinedAt: text("joined_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
   uniqueIndex("idx_cohort_members_cohort_user").on(table.cohortId, table.userId),
-  index("idx_cohort_members_user").on(table.userId),
+  uniqueIndex("idx_cohort_members_user").on(table.userId),
 ]);
 
 export const educatorPermissions = sqliteTable("educator_permissions", {

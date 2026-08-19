@@ -215,6 +215,9 @@ type CreatorFormat = "on_camera" | "faceless" | "voiceover" | "hands_only" | "sc
 type CreatorProject = { id: string; campaignId: string | null; title: string; platform: string; format: CreatorFormat; objective: string; hook: string; shots: string[]; caption: string; status: "draft" | "ready"; reviewStatus: "not_requested" | "submitted" | "changes_requested" | "approved"; reviewNotes: string | null; createdAt: string; updatedAt: string; campaign: CampusCampaign | null };
 type CreatorReviewProject = CreatorProject & { student: { username: string; displayName: string } | null };
 type CreatorProjectState = { projects: CreatorProject[]; reviewQueue: CreatorReviewProject[] };
+type CohortRosterStudent = { id: string; username: string; displayName: string; email: string; joinedAt: string; ethereumAddress: string; solanaAddress: string; lessonsCompleted: number };
+type CampusCohort = { id: string; title: string; college: string; joinCode: string | null; expectedStudents: number; enrollmentOpen: boolean; status: "draft" | "active" | "complete"; memberCount: number; roster: CohortRosterStudent[] };
+type CohortState = { role: "student" | "educator" | "owner"; gateEnabled: boolean; membership: { id: string; title: string; college: string; joinedAt?: string } | null; cohorts: CampusCohort[] };
 type EducatorDashboard = {
   metrics: { activeStudents: number; bothWallets: number; lessonsCompleted: number; onchainActions: number; nftCollections: number; tokens: number; rwas: number; openAirdrops: number };
   roster: Array<{ id: string; username: string; displayName: string; email: string; ethereumReady: boolean; solanaReady: boolean; lessonsCompleted: number; ethFunded: boolean; solFunded: boolean; assetsCreated: number; issues: string[]; sessionStatus: ClassroomActivity["status"] | null; proofLabel: string | null }>;
@@ -414,6 +417,11 @@ export default function OnchainLab() {
   const [creatorProjectBusy, setCreatorProjectBusy] = useState(false);
   const [creatorDraft, setCreatorDraft] = useState<{ id: string; campaignId: string; title: string; platform: string; format: CreatorFormat; objective: string; hook: string; shots: string[]; caption: string }>({ id: "", campaignId: "", title: "", platform: "Instagram Reels", format: "faceless", objective: "", hook: "", shots: ["", "", "", "", ""], caption: "" });
   const [creatorReviewNotes, setCreatorReviewNotes] = useState<Record<string, string>>({});
+  const [cohortState, setCohortState] = useState<CohortState | null>(null);
+  const [cohortBusy, setCohortBusy] = useState(false);
+  const [cohortJoinCode, setCohortJoinCode] = useState("");
+  const [cohortError, setCohortError] = useState("");
+  const [cohortDraft, setCohortDraft] = useState({ title: "", college: "", expectedStudents: "200" });
   const [artPreview, setArtPreview] = useState<string | null>(null);
   const [selectedCourse, setSelectedCourse] = useState<Course>("ethereum");
   const [selectedLesson, setSelectedLesson] = useState<Lesson>(ethereumLessons[1]);
@@ -510,6 +518,7 @@ export default function OnchainLab() {
   const displayEmail = user?.google?.email ?? "Student · Cohort 04";
   const initials = displayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
   const onboarded = demoMode || (authenticated && profileStatus === "ready");
+  const cohortLocked = !demoMode && onboarded && cohortState?.gateEnabled === true && cohortState.role === "student" && !cohortState.membership;
   const completed = learningState?.completedCount ?? 0;
   const progress = Math.round((completed / 25) * 100);
   const selectedProgress = learningState?.records.find((record) => record.course === selectedLesson.course && record.lessonId === selectedLesson.id);
@@ -573,6 +582,7 @@ export default function OnchainLab() {
     void loadDrops();
     void loadLeague();
     void loadCreatorProjects();
+    void loadCohorts();
   }, [authenticated, identityToken, profileStatus]);
 
   useEffect(() => {
@@ -742,6 +752,25 @@ export default function OnchainLab() {
     const format = creatorDraft.format.replaceAll("_", " ");
     const plan = `${creatorDraft.title}\n${creatorDraft.platform} · ${format}\n\nOBJECTIVE\n${creatorDraft.objective}\n\nHOOK\n${creatorDraft.hook}\n\nFIVE SHOTS\n${creatorDraft.shots.map((shot, index) => `${index + 1}. ${shot}`).join("\n")}\n\nCAPTION\n${creatorDraft.caption}`;
     void navigator.clipboard.writeText(plan).then(() => notify("Shoot plan copied — paste it into Notes or your editing workflow"));
+  }
+
+  async function loadCohorts() {
+    const requestToken = await campusIdentityToken(); if (!requestToken) return;
+    try { const response = await fetch("/api/cohorts", { headers: { "privy-id-token": requestToken } }); const result = await response.json() as CohortState & { error?: string }; if (!response.ok) throw new Error(result.error ?? "Cohort access is unavailable"); setCohortState(result); } catch { /* A later refresh or action will retry. */ }
+  }
+
+  async function cohortAction(action: "create" | "join" | "set_enrollment" | "complete" | "move", payload: Record<string, unknown>) {
+    const requestToken = await campusIdentityToken(); if (!requestToken) return;
+    setCohortBusy(true); setCohortError("");
+    try { const response = await fetch("/api/cohorts", { method: "POST", headers: { "content-type": "application/json", "privy-id-token": requestToken }, body: JSON.stringify({ action, ...payload }) }); const result = await response.json() as CohortState & { error?: string }; if (!response.ok) throw new Error(result.error ?? "Cohort action failed"); setCohortState(result); if (action === "create") setCohortDraft({ title: "", college: "", expectedStudents: "200" }); if (action === "join") { setCohortJoinCode(""); void loadLeague(); } notify(action === "join" ? "Welcome to your Campus cohort" : action === "create" ? "Private cohort opened" : "Cohort settings updated"); } catch (error) { const message = error instanceof Error ? error.message : "Cohort action failed"; setCohortError(message); notify(message); } finally { setCohortBusy(false); }
+  }
+
+  function exportCohortRoster(cohort: CampusCohort) {
+    const cell = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`;
+    const rows = [["Name", "Username", "Email", "Ethereum address", "Solana address", "Lessons completed", "Joined at"], ...cohort.roster.map((student) => [student.displayName, `@${student.username}`, student.email, student.ethereumAddress, student.solanaAddress, student.lessonsCompleted, student.joinedAt])];
+    const csv = rows.map((row) => row.map(cell).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a"); link.href = url; link.download = `${cohort.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-roster.csv`; link.click(); URL.revokeObjectURL(url); notify("Cohort roster downloaded");
   }
 
   async function partnerDropAction(action: "create" | "claim", payload: Record<string, unknown>) {
@@ -2612,7 +2641,7 @@ export default function OnchainLab() {
           {active === "passport" && (
             <div className="page-stack">
               <section className="passport-hero">
-                <div className="passport-identity"><span className="profile-dot large">{initials}</span><div><span className="eyebrow">FACELESS STUDENT PASSPORT</span><h2>{displayName}</h2><p>Creator · Builder · Cohort 04</p></div></div>
+                <div className="passport-identity"><span className="profile-dot large">{initials}</span><div><span className="eyebrow">FACELESS STUDENT PASSPORT</span><h2>{displayName}</h2><p>Creator · Builder · {cohortState?.membership?.title ?? "Campus member"}</p></div></div>
                 <div className="passport-wallet"><small>MULTICHAIN CLASSROOM IDENTITY</small>{campusUsername && <strong>@{campusUsername}</strong>}<strong>{ethWallet}</strong><strong>{solWallet}</strong><span><i /> Sepolia + Solana Devnet ready</span></div>
               </section>
               {classroomProofs.length > 0 && <section className="classroom-proof-strip card"><div className="section-head"><span><b>VERIFIED CLASSROOM PROOFS</b><small>Permanent records earned through live Campus quests</small></span><em>{classroomProofs.length}</em></div><div>{classroomProofs.slice(0, 4).map((proof) => <article key={proof.id}><span>✓</span><div><small>{new Date(proof.completedAt).toLocaleDateString()}</small><b>{proof.title}</b><p>{proof.proofLabel}</p></div></article>)}</div></section>}
@@ -2640,6 +2669,12 @@ export default function OnchainLab() {
           {active === "admin" && (
             <div className="page-stack">
               <section className="admin-banner educator-hero"><div><span className="eyebrow">EDUCATOR COMMAND CENTRE</span><h2>{educatorDashboard?.currentSession ? "Your classroom is live." : "Ready for the next session."}</h2><p>See who is ready, spot students who are stuck, and send one guided onchain quest to the whole class.</p></div><div className="admin-hero-actions"><button onClick={downloadClassReport}>Download class CSV</button><button onClick={loadEducatorDashboard} disabled={educatorBusy}>{educatorBusy ? "Refreshing…" : "Refresh classroom"}</button></div></section>
+              <section className="cohort-manager card">
+                <div className="section-head"><span><b>COHORT MANAGER</b><small>Create private batches, control enrollment and export the complete roster</small></span><em>{cohortState?.cohorts.filter((cohort) => cohort.status === "active").length ?? 0} active</em></div>
+                <form onSubmit={(event) => { event.preventDefault(); void cohortAction("create", cohortDraft); }}><label>Cohort name<input value={cohortDraft.title} onChange={(event) => setCohortDraft((current) => ({ ...current, title: event.target.value }))} placeholder="Blockchain Club · Batch 01" required /></label><label>College<input value={cohortDraft.college} onChange={(event) => setCohortDraft((current) => ({ ...current, college: event.target.value }))} placeholder="College name" required /></label><label>Seat limit<input type="number" min="1" max="500" value={cohortDraft.expectedStudents} onChange={(event) => setCohortDraft((current) => ({ ...current, expectedStudents: event.target.value }))} /></label><button disabled={cohortBusy}>{cohortBusy ? "Creating…" : "Create private cohort →"}</button></form>
+                {cohortError && <div className="cohort-admin-error">{cohortError}</div>}
+                <div className="cohort-list">{cohortState?.cohorts.length ? cohortState.cohorts.map((cohort) => <article key={cohort.id} className={cohort.status === "complete" ? "complete" : ""}><header><div><small>{cohort.college}</small><h3>{cohort.title}</h3><p>{cohort.memberCount} of {cohort.expectedStudents} seats · {cohort.status === "complete" ? "Completed" : cohort.enrollmentOpen ? "Enrollment open" : "Enrollment closed"}</p></div><span>{cohort.status}</span></header><div className="cohort-code"><span><small>PRIVATE JOIN CODE</small><b>{cohort.joinCode}</b></span><button onClick={() => navigator.clipboard.writeText(cohort.joinCode).then(() => notify("Cohort code copied"))}>Copy code</button></div><div className="cohort-actions"><button disabled={cohort.status === "complete" || cohortBusy} onClick={() => void cohortAction("set_enrollment", { cohortId: cohort.id, enrollmentOpen: !cohort.enrollmentOpen })}>{cohort.enrollmentOpen ? "Close enrollment" : "Open enrollment"}</button><button onClick={() => exportCohortRoster(cohort)}>Export roster CSV</button><button disabled={cohort.status === "complete" || cohortBusy} onClick={() => void cohortAction("complete", { cohortId: cohort.id })}>Complete batch</button></div><details><summary>View student roster <span>{cohort.memberCount}</span></summary>{cohort.roster.length ? <div className="cohort-roster"><div><b>Student</b><b>Wallets</b><b>Lessons</b></div>{cohort.roster.map((student) => <div key={student.id}><span><b>{student.displayName}</b><small>@{student.username} · {student.email}</small></span><span>{student.ethereumAddress ? "ETH ✓" : "ETH —"} · {student.solanaAddress ? "SOL ✓" : "SOL —"}</span><span>{student.lessonsCompleted} / 25</span></div>)}</div> : <p className="cohort-empty">Share the private code when you are ready to admit students.</p>}</details></article>) : <div className="cohort-empty-state"><b>No cohort created yet.</b><span>Create your first private batch above. Existing Campus access remains open until then.</span></div>}</div>
+              </section>
               <div className="command-metrics">
                 <article><small>ACTIVE STUDENTS</small><strong>{educatorDashboard?.metrics.activeStudents ?? 0}</strong><span>verified profiles</span></article>
                 <article><small>BOTH WALLETS READY</small><strong>{educatorDashboard?.metrics.bothWallets ?? 0}</strong><span>Ethereum + Solana</span></article>
@@ -2703,6 +2738,8 @@ export default function OnchainLab() {
           </div>
         </div>
       )}
+
+      {cohortLocked && <div className="cohort-gate-overlay"><section><MaskOrb compact /><span className="eyebrow">PRIVATE CAMPUS COHORT</span><h2>Enter your classroom.</h2><p>Your profile and wallets are ready. Use the private code shared by your educator to unlock lessons, quests, markets and campaigns.</p><label>Cohort join code<input autoFocus value={cohortJoinCode} onChange={(event) => { setCohortJoinCode(event.target.value.toUpperCase()); setCohortError(""); }} placeholder="FACELESS-XXXXXX" maxLength={20} /></label>{cohortError && <div>{cohortError}</div>}<button disabled={cohortBusy || cohortJoinCode.length < 8} onClick={() => void cohortAction("join", { joinCode: cohortJoinCode })}>{cohortBusy ? "Checking code…" : "Join Campus cohort →"}</button><small>Codes are seat-limited and can be closed by the educator. Never share yours publicly.</small></section></div>}
 
       {transactionQueue && <div className="transaction-queue" role="status" aria-live="polite"><span>{transactionQueue.seconds > 0 ? transactionQueue.seconds : "✓"}</span><div><b>{transactionQueue.seconds > 0 ? "Campus queue" : "Your turn"}</b><small>{transactionQueue.seconds > 0 ? `Position ${transactionQueue.position} · wallet opens in about ${transactionQueue.seconds}s` : "Opening your wallet for approval…"}</small></div></div>}
       {toast && <div className="toast"><span>✓</span>{toast}</div>}

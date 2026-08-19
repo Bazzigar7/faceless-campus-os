@@ -140,6 +140,23 @@ test("educator command centre uses live cohort data and broadcasts classroom que
   assert.match(sessionRoute, /proofs/);
 });
 
+test("private cohorts gate Campus access and give the educator a roster", async () => {
+  const [client, route, league, schema] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/cohorts/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/league/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /COHORT MANAGER/);
+  assert.match(client, /PRIVATE CAMPUS COHORT/);
+  assert.match(client, /Export roster CSV/);
+  assert.match(route, /This cohort has reached its seat limit/);
+  assert.match(route, /Only the Campus OS owner can manage cohorts/);
+  assert.match(league, /cohortUserIds/);
+  assert.match(schema, /idx_cohorts_join_code/);
+  assert.match(schema, /uniqueIndex\("idx_cohort_members_user"\)/);
+});
+
 test("campaign engine persists missions, submissions and owner payment approval", async () => {
   const [client, route, schema] = await Promise.all([
     readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),

@@ -387,8 +387,11 @@ test("Home shows one next step while the educator keeps cohort readiness", async
   ]);
   assert.match(client, /DO THIS NEXT/);
   assert.match(client, /firstDayState\?\.next/);
-  assert.match(client, /Learn something/);
-  assert.match(client, /home-destinations/);
+  assert.match(client, /Learn\. Build\./);
+  assert.match(client, /Create\. Earn\./);
+  assert.match(client, /home-scoreboard/);
+  assert.match(client, /home-journey/);
+  assert.match(client, /homeEarnings/);
   assert.doesNotMatch(client, /RECENT ONCHAIN ACTIVITY/);
   assert.doesNotMatch(client, /LIVE CAMPAIGN/);
   assert.match(client, /FIRST-DAY READINESS/);

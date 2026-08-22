@@ -587,6 +587,11 @@ export default function OnchainLab() {
   const cohortLocked = !demoMode && onboarded && cohortState?.gateEnabled === true && cohortState.role === "student" && !cohortState.membership;
   const completed = learningState?.completedCount ?? 0;
   const progress = Math.round((completed / 25) * 100);
+  const completedBuilds = builderProjectState?.projects.filter((project) => project.status === "verified").length ?? 0;
+  const completedCreations = creatorProjectState?.projects.filter((project) => project.status === "ready" || project.reviewStatus === "approved").length ?? 0;
+  const paidCampaigns = campaignState?.payouts.filter((payout) => payout.status === "paid") ?? [];
+  const totalEarnedInr = paidCampaigns.reduce((total, payout) => payout.currency.toUpperCase() === "INR" ? total + (Number(payout.amount.replaceAll(",", "")) || 0) : total, 0);
+  const homeEarnings = `₹${totalEarnedInr.toLocaleString("en-IN")}`;
   const selectedProgress = learningState?.records.find((record) => record.course === selectedLesson.course && record.lessonId === selectedLesson.id);
   const selectedComplete = selectedProgress?.status === "completed";
 
@@ -2537,12 +2542,24 @@ export default function OnchainLab() {
           </section>}
           {active === "home" && (
             <div className="home-simple">
-              <section className="home-welcome">
-                <div><span className="eyebrow">FACELESS CAMPUS OS</span><h2>Learn something.<br /><em>Build something.</em></h2><p>Pick up where you left off, or ask Mask for help.</p><div><button onClick={resumeLearningQuest}>{learningState?.resume ? "Continue learning" : "Start learning"} →</button><button onClick={() => setActive("mask")}>Ask Mask</button></div></div>
-                <aside><div className="signal-ring ring-one" /><MaskOrb /><span><b>{progress}%</b><small>{completed} of 25 lessons</small></span></aside>
+              <section className="home-overview">
+                <header><div><span className="eyebrow">YOUR FACELESS CAMPUS</span><h2>Learn. Build.<br /><em>Create. Earn.</em></h2></div><MaskOrb compact /></header>
+                <div className="home-scoreboard">
+                  <button onClick={() => setActive("learn")}><small>LEARNING</small><b>{progress}%</b><span>{completed} of 25 lessons</span><i><em style={{ width: `${progress}%` }} /></i></button>
+                  <button onClick={() => setActive("create")}><small>BUILDS</small><b>{completedBuilds}</b><span>verified projects</span></button>
+                  <button onClick={() => setActive("tools")}><small>CREATIONS</small><b>{completedCreations}</b><span>ready to share</span></button>
+                  <button onClick={() => setActive("campaigns")}><small>EARNED</small><b>{homeEarnings}</b><span>{paidCampaigns.length} confirmed payment{paidCampaigns.length === 1 ? "" : "s"}</span></button>
+                </div>
               </section>
 
               {attendanceState?.prompt && <section className="home-live-checkin"><span><i /> LIVE CLASS</span><div><b>{attendanceState.prompt.title}</b><small>Enter the code shown by your educator.</small></div><form onSubmit={(event) => { event.preventDefault(); void attendanceAction("check_in", { code: attendanceCode }); }}><input aria-label="Classroom attendance code" value={attendanceCode} onChange={(event) => { setAttendanceCode(event.target.value.toUpperCase()); setAttendanceError(""); }} placeholder="6-DIGIT CODE" maxLength={6} /><button disabled={attendanceBusy || attendanceCode.length !== 6}>{attendanceBusy ? "Checking…" : "Check in"}</button></form>{attendanceError && <em>{attendanceError}</em>}</section>}
+
+              <section className="home-journey" aria-label="Learn, build, create and earn">
+                <button onClick={() => setActive("learn")}><span>01</span><div><b>Learn</b><small>Understand the idea</small></div><em>→</em></button>
+                <button onClick={() => setActive("create")}><span>02</span><div><b>Build</b><small>Make it onchain</small></div><em>→</em></button>
+                <button onClick={() => setActive("tools")}><span>03</span><div><b>Create</b><small>Turn ideas into content</small></div><em>→</em></button>
+                <button onClick={() => setActive("campaigns")}><span>04</span><div><b>Earn</b><small>Complete paid campaigns</small></div><em>→</em></button>
+              </section>
 
               <section className="home-next card">
                 <div><span className="eyebrow">DO THIS NEXT</span><h3>{firstDayState?.next?.title ?? (learningState?.resume ? "Continue your lesson" : "Start with blockchain basics")}</h3><p>{firstDayState?.next?.description ?? "Watch one short lesson and try the activity."}</p></div>
@@ -2550,11 +2567,10 @@ export default function OnchainLab() {
                 <button onClick={() => firstDayState?.next ? openFirstDayStep(firstDayState.next) : resumeLearningQuest}>Continue →</button>
               </section>
 
-              <section className="home-destinations" aria-label="Campus destinations">
-                <button onClick={() => setActive("learn")}><span>01</span><b>Learn</b><small>Watch a lesson</small><em>→</em></button>
-                <button onClick={() => setActive("mask")}><span>02</span><b>Ask Mask</b><small>Get help or plan</small><em>→</em></button>
-                <button onClick={() => setActive("wallet")}><span>03</span><b>Wallet</b><small>Claim, send, view</small><em>→</em></button>
-                <button onClick={() => setActive("campaigns")}><span>04</span><b>Campaigns</b><small>Create and earn</small><em>→</em></button>
+              <section className="home-shortcuts" aria-label="Quick access">
+                <button onClick={() => setActive("mask")}><MaskOrb compact /><span><b>Ask Mask</b><small>Get help or plan your next move</small></span><em>→</em></button>
+                <button onClick={() => setActive("wallet")}><i>◇</i><span><b>Wallet</b><small>Claim, send and view assets</small></span><em>→</em></button>
+                <button onClick={() => setActive("market")}><i>↗</i><span><b>Market</b><small>Explore NFTs, tokens and RWAs</small></span><em>→</em></button>
               </section>
             </div>
           )}

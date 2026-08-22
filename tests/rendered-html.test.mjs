@@ -282,14 +282,15 @@ test("Campus League scores only verified learning and testnet activity", async (
   assert.match(client, /No self-reported/);
 });
 
-test("Build presents one simple Mask-guided launcher", async () => {
+test("Build presents one project form and one complete launchpad", async () => {
   const client = await readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8");
   assert.match(client, /label: "Build"/);
-  assert.match(client, /BUILD ONCHAIN/);
-  assert.match(client, /What do you want/);
-  assert.match(client, /Deploy with Mask/);
+  assert.match(client, /Write about your project/);
+  assert.match(client, /LAUNCHPAD/);
+  assert.match(client, /Launch token/);
   assert.match(client, />NFT collection</);
   assert.match(client, />RWA</);
+  assert.match(client, />Other project</);
   assert.doesNotMatch(client, /build-workspace-nav/);
   assert.doesNotMatch(client, /XP missions and games/);
   assert.doesNotMatch(client, /label: "Playground"/);

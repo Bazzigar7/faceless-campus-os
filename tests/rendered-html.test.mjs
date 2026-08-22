@@ -229,6 +229,10 @@ test("campaign engine persists missions, submissions and owner payment approval"
   assert.match(client, /APPROVED PAYMENT QUEUE/);
   assert.match(client, /PAYMENT LEDGER/);
   assert.match(client, /YOUR CREATOR EARNINGS/);
+  assert.match(client, /Every campaign earns/);
+  assert.match(client, /Partner airdrop/);
+  assert.match(client, /Clipping and UGC campaigns can also earn money/);
+  assert.match(client, /View campaign/);
   assert.match(route, /approved_for_payment/);
   assert.match(route, /record_payment/);
   assert.match(route, /destinationReference/);
@@ -278,6 +282,8 @@ test("Campus League scores only verified learning and testnet activity", async (
   assert.match(schema, /idx_xp_proofs_user_mission/);
   assert.match(route, /approved_for_payment/);
   assert.match(route, /points\.partnerDrop/);
+  assert.match(route, /partnerLabTeams/);
+  assert.match(route, /team\.status === "verified"/);
   assert.match(route, /Math\.min\(breakdown\.tokenTransfers, caps\.transfer\)/);
   assert.match(client, /No self-reported/);
 });

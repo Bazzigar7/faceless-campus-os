@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import {
   builderProjectMembers, builderProjects, campaignSubmissions, classroomSessionActivity, cohortMembers, faucetClaims, marketPurchases,
-  partnerDropClaims, rwaTrades, testnetLaunches, testnetTokens, tokenAirdropClaims, tokenTransfers, users, xpProofs,
+  partnerDropClaims, partnerLabMembers, partnerLabTeams, rwaTrades, testnetLaunches, testnetTokens, tokenAirdropClaims, tokenTransfers, users, xpProofs,
 } from "../../../db/schema";
 import { faucetError, requireCampusUser } from "../../../lib/faucet-auth";
 
@@ -19,7 +19,7 @@ function levelFor(xp: number) {
 export async function GET(request: Request) {
   try {
     const { db, student } = await requireCampusUser(request);
-    const [studentRows, memberRows, xpProofRows, sessionRows, faucetRows, transferRows, purchaseRows, launchRows, tokenRows, rwaRows, campaignRows, dropRows, airdropRows, projectRows, projectMemberRows] = await Promise.all([
+    const [studentRows, memberRows, xpProofRows, sessionRows, faucetRows, transferRows, purchaseRows, launchRows, tokenRows, rwaRows, campaignRows, partnerTeamRows, partnerMemberRows, dropRows, airdropRows, projectRows, projectMemberRows] = await Promise.all([
       db.select().from(users).where(eq(users.status, "active")),
       db.select().from(cohortMembers),
       db.select().from(xpProofs),
@@ -31,6 +31,8 @@ export async function GET(request: Request) {
       db.select().from(testnetTokens),
       db.select().from(rwaTrades),
       db.select().from(campaignSubmissions),
+      db.select().from(partnerLabTeams),
+      db.select().from(partnerLabMembers),
       db.select().from(partnerDropClaims),
       db.select().from(tokenAirdropClaims),
       db.select().from(builderProjects),
@@ -45,7 +47,7 @@ export async function GET(request: Request) {
         nftMints: purchaseRows.filter((row) => row.buyerUserId === userId).length + launchRows.filter((row) => row.userId === userId && row.status === "minted").length,
         tokenLaunches: tokenRows.filter((row) => row.userId === userId && row.status === "deployed").length,
         rwaTrades: rwaRows.filter((row) => row.userId === userId).length,
-        campaigns: campaignRows.filter((row) => row.userId === userId && (row.status === "approved_for_payment" || row.status === "paid")).length,
+        campaigns: campaignRows.filter((row) => row.userId === userId && (row.status === "approved_for_payment" || row.status === "paid")).length + partnerTeamRows.filter((team) => team.status === "verified" && partnerMemberRows.some((member) => member.teamId === team.id && member.userId === userId && member.status === "accepted")).length,
         partnerDrops: dropRows.filter((row) => row.userId === userId).length,
         airdrops: airdropRows.filter((row) => row.userId === userId && row.status === "sent").length,
         verifiedProjects: projectRows.filter((row) => row.status === "verified" && (row.userId === userId || projectMemberRows.some((member) => member.projectId === row.id && member.userId === userId && member.status === "accepted"))).length,

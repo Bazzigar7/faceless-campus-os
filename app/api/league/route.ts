@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import {
-  builderProjectMembers, builderProjects, campaignSubmissions, classroomSessionActivity, cohortMembers, faucetClaims, lessonProgress, marketPurchases,
-  partnerDropClaims, rwaTrades, testnetLaunches, testnetTokens, tokenAirdropClaims, tokenTransfers, users,
+  builderProjectMembers, builderProjects, campaignSubmissions, classroomSessionActivity, cohortMembers, faucetClaims, marketPurchases,
+  partnerDropClaims, rwaTrades, testnetLaunches, testnetTokens, tokenAirdropClaims, tokenTransfers, users, xpProofs,
 } from "../../../db/schema";
 import { faucetError, requireCampusUser } from "../../../lib/faucet-auth";
 
@@ -19,10 +19,10 @@ function levelFor(xp: number) {
 export async function GET(request: Request) {
   try {
     const { db, student } = await requireCampusUser(request);
-    const [studentRows, memberRows, lessonRows, sessionRows, faucetRows, transferRows, purchaseRows, launchRows, tokenRows, rwaRows, campaignRows, dropRows, airdropRows, projectRows, projectMemberRows] = await Promise.all([
+    const [studentRows, memberRows, xpProofRows, sessionRows, faucetRows, transferRows, purchaseRows, launchRows, tokenRows, rwaRows, campaignRows, dropRows, airdropRows, projectRows, projectMemberRows] = await Promise.all([
       db.select().from(users).where(eq(users.status, "active")),
       db.select().from(cohortMembers),
-      db.select().from(lessonProgress),
+      db.select().from(xpProofs),
       db.select().from(classroomSessionActivity),
       db.select().from(faucetClaims),
       db.select().from(tokenTransfers),
@@ -38,7 +38,7 @@ export async function GET(request: Request) {
     ]);
     const recordFor = (userId: string) => {
       const breakdown = {
-        lessons: lessonRows.filter((row) => row.userId === userId && row.status === "completed").length,
+        lessons: xpProofRows.filter((row) => row.userId === userId && row.status === "verified" && row.missionType === "lesson").length,
         liveQuests: sessionRows.filter((row) => row.userId === userId && row.status === "completed").length,
         faucetClaims: faucetRows.filter((row) => row.userId === userId && row.status === "sent").length,
         tokenTransfers: transferRows.filter((row) => row.fromUserId === userId).length,
@@ -60,7 +60,7 @@ export async function GET(request: Request) {
     const own = recordFor(student.id);
     const ownRank = ranked.findIndex((row) => row.id === student.id);
     const missions = [
-      { id: "lesson", title: "Complete a lesson", xp: points.lesson, done: own.breakdown.lessons > 0, destination: "learn" },
+      { id: "lesson", title: "Complete a lesson + sign the proof", xp: points.lesson, done: own.breakdown.lessons > 0, destination: "learn" },
       { id: "quest", title: "Verify a live class quest", xp: points.liveQuest, done: own.breakdown.liveQuests > 0, destination: "home" },
       { id: "transfer", title: "Send a classroom token", xp: points.transfer, done: own.breakdown.tokenTransfers > 0, destination: "market" },
       { id: "nft", title: "Mint a testnet NFT", xp: points.nft, done: own.breakdown.nftMints > 0, destination: "market" },

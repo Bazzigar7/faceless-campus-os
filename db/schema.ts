@@ -192,6 +192,23 @@ export const lessonProgress = sqliteTable("lesson_progress", {
   index("idx_lesson_progress_course_status").on(table.course, table.status),
 ]);
 
+export const xpProofs = sqliteTable("xp_proofs", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  missionKey: text("mission_key").notNull(),
+  missionType: text("mission_type", { enum: ["lesson"] }).notNull(),
+  chain: text("chain", { enum: ["ethereum"] }).notNull().default("ethereum"),
+  walletAddress: text("wallet_address").notNull(),
+  transactionHash: text("transaction_hash").notNull(),
+  xpAmount: integer("xp_amount").notNull(),
+  status: text("status", { enum: ["verified"] }).notNull().default("verified"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_xp_proofs_user_mission").on(table.userId, table.missionKey),
+  uniqueIndex("idx_xp_proofs_transaction").on(table.transactionHash),
+  index("idx_xp_proofs_user_status").on(table.userId, table.status),
+]);
+
 export const mainnetLaunchRequests = sqliteTable("mainnet_launch_requests", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

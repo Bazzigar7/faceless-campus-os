@@ -25,7 +25,7 @@ import { create as createCoreAsset, createCollection as createCoreCollection, fe
 import { create as createCoreCandyMachine, mintV1 as mintCoreCandyMachine, mplCandyMachine } from "@metaplex-foundation/mpl-core-candy-machine";
 import { createNoopSigner as createUmiNoopSigner, generateSigner, none, publicKey, signerIdentity, sol, some } from "@metaplex-foundation/umi";
 import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
-import { createPublicClient, encodeFunctionData, http, isAddress, parseEther, type Hex } from "viem";
+import { createPublicClient, encodeFunctionData, http, isAddress, parseEther, stringToHex, type Hex } from "viem";
 import { sepolia } from "viem/chains";
 import LiveMask from "./LiveMask";
 
@@ -54,6 +54,7 @@ type LearningState = {
   resume: LearningRecord | null;
   cohort?: { activeStudents: number; lessonsCompleted: number; lessonsInProgress: number; completionRate: number; courses: Array<{ course: Course; completed: number }> };
 };
+type XpProof = { id: string; missionKey: string; missionType: "lesson"; chain: "ethereum"; transactionHash: string; xpAmount: number; status: "verified"; createdAt: string };
 type MaskCitation = { title: string; url: string };
 type LaunchDraft = {
   assetType: "nft_collection" | "token";
@@ -266,11 +267,9 @@ const navItems: { id: Tab; label: string; mark: string }[] = [
   { id: "wallet", label: "Wallets", mark: "▱" },
   { id: "learn", label: "Learn", mark: "▶" },
   { id: "mask", label: "Ask Mask", mark: "M" },
-  { id: "create", label: "Build lab", mark: "+" },
-  { id: "games", label: "Playground", mark: "◆" },
+  { id: "create", label: "Build", mark: "+" },
   { id: "tools", label: "Creator tools", mark: "✦" },
   { id: "campaigns", label: "Campaigns", mark: "◎" },
-  { id: "launchpad", label: "Launchpad", mark: "↗" },
   { id: "market", label: "Market", mark: "◈" },
   { id: "passport", label: "My passport", mark: "◇" },
   { id: "admin", label: "Educator view", mark: "▦" },
@@ -563,6 +562,8 @@ export default function OnchainLab() {
   const [rabbyTransfer, setRabbyTransfer] = useState({ address: "", amount: "0.0008", status: "idle" as "idle" | "sending" | "sent" | "error", hash: "", error: "" });
   const [learningState, setLearningState] = useState<LearningState | null>(null);
   const [learningBusy, setLearningBusy] = useState(false);
+  const [xpProofs, setXpProofs] = useState<XpProof[]>([]);
+  const [xpProofBusy, setXpProofBusy] = useState(false);
   const [classroomSession, setClassroomSession] = useState<ClassroomSession | null>(null);
   const [classroomActivity, setClassroomActivity] = useState<ClassroomActivity | null>(null);
   const [classroomProofs, setClassroomProofs] = useState<ClassroomProof[]>([]);
@@ -596,8 +597,9 @@ export default function OnchainLab() {
   const selectedComplete = selectedProgress?.status === "completed";
   const selectedLessonIndex = lessonTracks[selectedLesson.course].findIndex((lesson) => lesson.id === selectedLesson.id);
   const nextLesson = lessonTracks[selectedLesson.course][selectedLessonIndex + 1] ?? null;
+  const selectedLessonProof = xpProofs.find((proof) => proof.missionKey === `lesson:${selectedLesson.course}:${selectedLesson.id}`) ?? null;
 
-  const title = useMemo(() => navItems.find((item) => item.id === active)?.label ?? "Home", [active]);
+  const title = useMemo(() => (["games", "launchpad"] as Tab[]).includes(active) ? "Build" : navItems.find((item) => item.id === active)?.label ?? "Home", [active]);
   const visibleMarketCollections = marketCollections.filter((collection) => {
     const chainMatches = marketFilter === "all" || collection.chain === marketFilter;
     const search = marketSearch.trim().toLowerCase();
@@ -670,6 +672,7 @@ export default function OnchainLab() {
     if (!authenticated || !identityToken || profileStatus !== "ready") return;
     void loadFaucetState();
     void loadLearningState();
+    void loadXpProofs();
     void loadWalletAssets();
     void loadClassroomSession();
     void loadCampaigns();
@@ -791,6 +794,17 @@ export default function OnchainLab() {
     } catch {
       // Lessons stay available even if progress sync is briefly unavailable.
     }
+  }
+
+  async function loadXpProofs() {
+    const requestToken = await campusIdentityToken();
+    if (!requestToken) return;
+    try {
+      const response = await fetch("/api/xp", { headers: { "privy-id-token": requestToken } });
+      const result = await response.json() as { proofs?: XpProof[]; error?: string };
+      if (!response.ok) throw new Error(result.error ?? "XP proofs are unavailable");
+      setXpProofs(result.proofs ?? []);
+    } catch { /* The student can keep learning while XP reconnects. */ }
   }
 
   async function loadClassroomSession() {
@@ -1436,6 +1450,39 @@ export default function OnchainLab() {
     if (now - lastProgressSent.current < 10) return;
     lastProgressSent.current = now;
     void saveLessonProgress(selectedLesson, "in_progress", now, Math.floor(video.duration || 0));
+  }
+
+  async function claimLessonXp() {
+    if (!selectedComplete) return notify("Complete the lesson before claiming XP");
+    if (selectedLessonProof) return notify("This lesson XP is already verified");
+    if (!ethereumWallet) return notify("Your Campus Ethereum wallet is unavailable");
+    const requestToken = await campusIdentityToken();
+    if (!requestToken) return notify("Sign in again before claiming XP");
+    setXpProofBusy(true);
+    try {
+      await ethereumWallet.switchChain(11155111);
+      const data = stringToHex(`FACELESS_XP|lesson:${selectedLesson.course}:${selectedLesson.id}`);
+      const { hash } = await sendEthereumTransaction(
+        { to: ethereumWallet.address as Hex, data, chainId: 11155111 },
+        { address: ethereumWallet.address, uiOptions: { showWalletUIs: true } },
+      );
+      const receipt = await sepoliaPublicClient.waitForTransactionReceipt({ hash: hash as Hex });
+      if (receipt.status !== "success") throw new Error("Sepolia rejected the XP proof");
+      const response = await fetch("/api/xp", {
+        method: "POST",
+        headers: { "content-type": "application/json", "privy-id-token": requestToken },
+        body: JSON.stringify({ course: selectedLesson.course, lessonId: selectedLesson.id, walletAddress: ethereumWallet.address, transactionHash: hash }),
+      });
+      const result = await response.json() as { proofs?: XpProof[]; error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Campus could not verify the XP proof");
+      setXpProofs(result.proofs ?? []);
+      await loadLeague();
+      notify("Lesson proof verified · +20 XP");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "The XP proof was not completed");
+    } finally {
+      setXpProofBusy(false);
+    }
   }
 
   function resumeLearningQuest() {
@@ -2485,6 +2532,12 @@ export default function OnchainLab() {
     notify("Campaign claimed — Mask prepared your brief checklist");
   }
 
+  const buildWorkspaceNav = <nav className="build-workspace-nav" aria-label="Build workspace">
+    <button className={active === "create" ? "active" : ""} onClick={() => setActive("create")}><span>01</span><div><b>Build</b><small>Ideas and projects</small></div></button>
+    <button className={active === "games" ? "active" : ""} onClick={() => setActive("games")}><span>02</span><div><b>Test</b><small>XP missions and games</small></div></button>
+    <button className={active === "launchpad" ? "active" : ""} onClick={() => setActive("launchpad")}><span>03</span><div><b>Launch</b><small>Tokens and NFTs</small></div></button>
+  </nav>;
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -2495,7 +2548,7 @@ export default function OnchainLab() {
 
         <nav className="main-nav" aria-label="Primary navigation">
           {navItems.filter((item) => item.id !== "admin" || faucetState?.role === "owner").map((item) => (
-            <button key={item.id} className={active === item.id ? "nav-item active" : "nav-item"} onClick={() => setActive(item.id)}>
+            <button key={item.id} className={active === item.id || (item.id === "create" && (active === "games" || active === "launchpad")) ? "nav-item active" : "nav-item"} onClick={() => setActive(item.id)}>
               <span className="nav-mark">{item.mark}</span>{item.label}
             </button>
           ))}
@@ -2598,10 +2651,15 @@ export default function OnchainLab() {
                   <span className="eyebrow">LESSON {String(selectedLesson.id).padStart(2, "0")} · {selectedLesson.unit}</span>
                   <h3>{selectedLesson.title}</h3>
                   <p>{selectedLesson.copy}</p>
-                  <div className={selectedComplete ? "lesson-complete-panel done" : "lesson-complete-panel"}><span>{selectedComplete ? "✓" : "○"}</span><div><b>{selectedComplete ? "Lesson complete" : "Finish this lesson"}</b><small>{selectedComplete ? "Your guided activity is unlocked." : "The video also completes automatically when it ends."}</small></div>{!selectedComplete && <button disabled={learningBusy} onClick={() => saveLessonProgress(selectedLesson, "completed", selectedProgress?.positionSeconds ?? 0, selectedProgress?.durationSeconds ?? 0)}>{learningBusy ? "Saving…" : "Mark complete"}</button>}</div>
+                  <div className={selectedComplete ? "lesson-complete-panel done" : "lesson-complete-panel"}><span>{selectedComplete ? "✓" : "○"}</span><div><b>{selectedComplete ? "Lesson complete" : "Finish this lesson"}</b><small>{selectedComplete ? selectedLessonProof ? "Wallet proof verified on Sepolia." : "Sign one wallet proof to earn the lesson XP." : "The video also completes automatically when it ends."}</small></div>{!selectedComplete ? <button disabled={learningBusy} onClick={() => saveLessonProgress(selectedLesson, "completed", selectedProgress?.positionSeconds ?? 0, selectedProgress?.durationSeconds ?? 0)}>{learningBusy ? "Saving…" : "Mark complete"}</button> : <button className="xp-proof-button" disabled={xpProofBusy || Boolean(selectedLessonProof)} onClick={() => void claimLessonXp()}>{selectedLessonProof ? "+20 XP verified ✓" : xpProofBusy ? "Check your wallet…" : "Sign proof · +20 XP"}</button>}</div>
                   <div className="lesson-actions"><button className="primary" disabled={!nextLesson} onClick={() => nextLesson && openLesson(nextLesson)}>{nextLesson ? "Next lesson →" : "Course complete ✓"}</button><button className="secondary" onClick={() => setActive("mask")}>Ask Mask</button></div>
                 </div>
               </section>
+              <section className="lesson-xp-missions card"><header><div><span className="eyebrow">NEXT: DO IT ONCHAIN</span><h3>Turn the theory into XP.</h3><p>The transaction itself becomes the proof. Complete each mission once to earn verified XP.</p></div><button onClick={() => setActive("games")}>View all XP →</button></header><div>
+                <button className={leagueState?.own.breakdown.tokenTransfers ? "done" : ""} onClick={() => { setMarketArea("tokens"); setActive("market"); }}><span>{leagueState?.own.breakdown.tokenTransfers ? "✓" : "01"}</span><div><b>Send a token</b><small>Make a real testnet transfer</small></div><em>+25 XP</em></button>
+                <button className={leagueState?.own.breakdown.nftMints ? "done" : ""} onClick={() => { setMarketArea("nfts"); setActive("market"); }}><span>{leagueState?.own.breakdown.nftMints ? "✓" : "02"}</span><div><b>Mint an NFT</b><small>Collect a testnet edition</small></div><em>+40 XP</em></button>
+                <button className={leagueState?.own.breakdown.tokenLaunches ? "done" : ""} onClick={() => setActive("launchpad")}><span>{leagueState?.own.breakdown.tokenLaunches ? "✓" : "03"}</span><div><b>Launch a token</b><small>Create it with your wallet</small></div><em>+75 XP</em></button>
+              </div></section>
               <div className="course-head"><div><span className="eyebrow">ALL LESSONS</span><h3>{selectedCourse === "blockchain" ? "Blockchain basics" : selectedCourse === "bitcoin" ? "Bitcoin foundations" : "Ethereum & applications"}</h3></div><span>{learningState?.courseProgress.find((item) => item.course === selectedCourse)?.completed ?? 0} of {lessonTracks[selectedCourse].length} complete</span></div>
               <div className="lesson-library">
                 {lessonTracks[selectedCourse].map((lesson) => (
@@ -2682,6 +2740,7 @@ export default function OnchainLab() {
 
           {active === "create" && (
             <div className="page-stack">
+              {buildWorkspaceNav}
               <section className="build-hero"><div><span className="eyebrow">IDEA → DEMO → TESTNET PROJECT</span><h2>See what is possible.<br />Then deploy your version.</h2><p>Every demo explains the idea, shows how it works and opens a guided build for Ethereum or Solana.</p></div><div className="build-chain"><button className={activeChain === "ethereum" ? "active" : ""} onClick={() => setActiveChain("ethereum")}>Ξ Ethereum<br /><small>Sepolia</small></button><button className={activeChain === "solana" ? "active sol" : "sol"} onClick={() => setActiveChain("solana")}>S Solana<br /><small>Devnet</small></button></div></section>
               <nav className="build-area-tabs" aria-label="Build Lab sections"><button className={buildArea === "ideas" ? "active" : ""} onClick={() => setBuildArea("ideas")}><b>01</b><span>Ideas<small>See what is possible</small></span></button><button className={buildArea === "studio" ? "active" : ""} onClick={() => setBuildArea("studio")}><b>02</b><span>Project Studio<small>Build with your team</small></span></button><button className={buildArea === "nft" ? "active" : ""} onClick={() => setBuildArea("nft")}><b>03</b><span>NFT Builder<small>Launch original art</small></span></button><button className={buildArea === "showcase" ? "active" : ""} onClick={() => { setBuildArea("showcase"); void loadShowcase(); }}><b>04</b><span>Showcase<small>Verified Campus work</small></span></button></nav>
               {buildArea === "ideas" && <div className="build-demo-grid">{buildDemos.map((demo) => <article className="build-demo card" key={demo.title}><span>{demo.icon}</span><div><small>{demo.level} · {demo.chain}</small><h3>{demo.title}</h3><p>{demo.copy}</p></div><button onClick={() => { setBuildArea("studio"); setBuilderDraft((current) => ({ ...current, title: demo.title, chain: demo.chain === "SOL" ? "solana" : demo.chain === "ETH" ? "ethereum" : "multichain", useCase: demo.title.includes("NFT") ? "NFTs & digital ownership" : demo.title.includes("token") ? "Tokens & communities" : demo.title.includes("real-world") ? "RWA tokenisation" : demo.title.includes("game") ? "Gaming & collectibles" : current.useCase })); }}>Build this idea →</button></article>)}</div>}
@@ -2714,6 +2773,7 @@ export default function OnchainLab() {
 
           {active === "games" && (
             <div className="page-stack">
+              {buildWorkspaceNav}
               <section className="league-hero"><div><span className="eyebrow">FACELESS CAMPUS LEAGUE</span><h2>Learn it. Prove it.<br /><i>Climb the league.</i></h2><p>XP comes only from Campus-verified learning and testnet actions. No self-reported scores and no real-money rewards.</p><button onClick={() => void loadLeague()} disabled={leagueLoading}>{leagueLoading ? "Updating league…" : "Refresh verified XP ↻"}</button></div><aside><MaskOrb compact /><span><small>YOUR VERIFIED XP</small><strong>{leagueState?.own.xp ?? 0}</strong><b>LVL {leagueState?.own.level ?? 1} · {leagueState?.own.name ?? "Wallet Rookie"}</b></span><div><i style={{ width: `${Math.min(100, ((leagueState?.own.xp ?? 0) / (leagueState?.own.nextAt ?? 100)) * 100)}%` }} /></div><small>{leagueState?.own.rank ? `Campus rank #${leagueState.own.rank}` : "Educator view"} · next level at {leagueState?.own.nextAt ?? 100} XP</small></aside></section>
               <div className="league-layout"><section className="league-board card"><div className="section-head"><span><b>LIVE LEADERBOARD</b><small>Top verified builders in this Campus cohort</small></span><em>{leagueState?.leaderboard.length ?? 0} ranked</em></div><div>{leagueState?.leaderboard.length ? leagueState.leaderboard.slice(0, 12).map((player) => <article key={player.id} className={player.username === campusUsername ? "you" : ""}><strong>{String(player.rank).padStart(2, "0")}</strong><span className="profile-dot">{player.displayName.slice(0, 2).toUpperCase()}</span><div><b>{player.displayName}</b><small>@{player.username} · {player.name}</small></div><em>{player.xp} XP</em></article>) : <p className="league-empty">Verified activity will appear here as students complete Campus quests.</p>}</div></section><section className="league-missions card"><div className="section-head"><span><b>XP MISSIONS</b><small>Every mission checks real Campus proof</small></span></div><div>{leagueState?.missions.map((mission) => <article key={mission.id} className={mission.done ? "done" : ""}><span>{mission.done ? "✓" : "+"}</span><div><b>{mission.title}</b><small>{mission.done ? "Verified on Campus" : `Earn ${mission.xp} XP`}</small></div><button onClick={() => setActive(mission.destination)}>{mission.done ? "View" : "Start →"}</button></article>) ?? <p className="league-empty">Loading your missions…</p>}</div></section></div>
               <div className="league-badges"><div><span className="eyebrow">YOUR PROOF BADGES</span><h3>Unlocked by actions—not button clicks.</h3></div>{leagueState?.own.badges.length ? <section>{leagueState.own.badges.map((badge) => <span key={badge}>◆ {badge}</span>)}</section> : <p>Complete your first mission to unlock a verified badge.</p>}</div>
@@ -2793,6 +2853,7 @@ export default function OnchainLab() {
 
           {active === "launchpad" && (
             <div className="page-stack">
+              {buildWorkspaceNav}
               <section className="launch-hero"><div><span className="eyebrow">STUDENT LAUNCHPAD · ETHEREUM + SOLANA</span><h2>Practise safely.<br />Launch when ready.</h2><p>Original student work begins on testnet. Mainnet publishing unlocks only after a successful practice launch and educator review.</p></div><img src="/faceless-cast.png" alt="Faceless character cast" /></section>
               {launchDraft && launchMode === "testnet" && <section className="mask-launch-studio card">
                 <div className="launch-studio-head"><div><span className="eyebrow">PREPARED WITH MASK</span><h3>Review your {launchDraft.assetType === "nft_collection" ? "NFT collection" : "token"}</h3><p>Mask filled this from your conversation. You can change anything before the wallet review.</p></div><span className="launch-network">{launchDraft.chain === "ethereum" ? "Ξ SEPOLIA" : "S SOLANA DEVNET"}</span></div>
@@ -2990,7 +3051,7 @@ export default function OnchainLab() {
           )}
         </div>
 
-        <nav className="mobile-nav" aria-label="Mobile navigation">{navItems.filter((item) => ["home", "learn", "mask", "market", "campaigns"].includes(item.id)).map((item) => <button key={item.id} className={active === item.id ? "active" : ""} onClick={() => setActive(item.id)}><span>{item.mark}</span>{item.label.split(" ")[0]}</button>)}</nav>
+        <nav className="mobile-nav" aria-label="Mobile navigation">{navItems.filter((item) => ["home", "learn", "mask", "create", "campaigns"].includes(item.id)).map((item) => <button key={item.id} className={active === item.id || (item.id === "create" && (active === "games" || active === "launchpad")) ? "active" : ""} onClick={() => setActive(item.id)}><span>{item.mark}</span>{item.label.split(" ")[0]}</button>)}</nav>
       </section>
 
       {!onboarded && (

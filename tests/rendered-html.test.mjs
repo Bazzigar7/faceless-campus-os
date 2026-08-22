@@ -258,19 +258,38 @@ test("partner drops create verified classroom credentials", async () => {
 });
 
 test("Campus League scores only verified learning and testnet activity", async () => {
-  const [client, route] = await Promise.all([
+  const [client, route, xpRoute, schema] = await Promise.all([
     readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/league/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/xp/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
   ]);
   assert.match(client, /FACELESS CAMPUS LEAGUE/);
   assert.match(client, /LIVE LEADERBOARD/);
   assert.match(client, /XP MISSIONS/);
   assert.match(client, /Unlocked by actions—not button clicks/);
-  assert.match(route, /status === "completed"/);
+  assert.match(client, /Sign proof · \+20 XP/);
+  assert.match(client, /NEXT: DO IT ONCHAIN/);
+  assert.match(route, /xpProofRows/);
+  assert.match(xpRoute, /FACELESS_XP/);
+  assert.match(xpRoute, /transaction\.input/);
+  assert.match(xpRoute, /Complete the lesson before signing/);
+  assert.match(schema, /xp_proofs/);
+  assert.match(schema, /idx_xp_proofs_user_mission/);
   assert.match(route, /approved_for_payment/);
   assert.match(route, /points\.partnerDrop/);
   assert.match(route, /Math\.min\(breakdown\.tokenTransfers, caps\.transfer\)/);
   assert.match(client, /No self-reported/);
+});
+
+test("Build, Playground and Launchpad live inside one Build workspace", async () => {
+  const client = await readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8");
+  assert.match(client, /label: "Build"/);
+  assert.match(client, /build-workspace-nav/);
+  assert.match(client, /XP missions and games/);
+  assert.match(client, /Tokens and NFTs/);
+  assert.doesNotMatch(client, /label: "Playground"/);
+  assert.doesNotMatch(client, /label: "Launchpad"/);
 });
 
 test("creator workspace saves guidance-first shoot plans", async () => {

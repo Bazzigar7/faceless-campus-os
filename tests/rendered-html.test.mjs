@@ -303,6 +303,11 @@ test("creator workspace saves guidance-first shoot plans", async () => {
     readFile(new URL("../app/api/creator-projects/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
   ]);
+  assert.match(client, /Make better content/);
+  assert.match(client, /What are you creating/);
+  assert.match(client, /Plan content/);
+  assert.match(client, /Learn the basics/);
+  assert.match(client, /Find a campaign/);
   assert.match(client, /SAVED CREATOR WORKSPACE/);
   assert.match(client, /THE FIVE-SHOT PLAN/);
   assert.match(client, /Instagram Edits/);

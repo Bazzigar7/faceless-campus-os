@@ -180,6 +180,8 @@ test("Learn and Mask keep the student focused on one clear action", async () => 
   assert.match(client, /Next lesson →/);
   assert.match(client, /mask-chat-shell/);
   assert.match(client, /Ask anything\. Learn, build, create/);
+  assert.match(client, /text: "Ask me anything\."/);
+  assert.doesNotMatch(client, /If it connects to a Faceless lesson/);
   assert.doesNotMatch(client, /HYBRID ANSWER MODE/);
   assert.doesNotMatch(client, /className="mask-tools"/);
   assert.doesNotMatch(client, /className="prompt-chips"/);

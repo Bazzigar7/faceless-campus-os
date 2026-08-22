@@ -484,7 +484,7 @@ export default function OnchainLab() {
   const [maskArtwork, setMaskArtwork] = useState<MaskArtwork | null>(null);
   const [launchArtwork, setLaunchArtwork] = useState<MaskArtwork | null>(null);
   const [maskArtworkRights, setMaskArtworkRights] = useState(false);
-  const [maskMessages, setMaskMessages] = useState<MaskMessage[]>([{ role: "assistant", text: "Ask me anything. If it connects to a Faceless lesson, I’ll use the approved material. If it doesn’t, I’ll answer it normally." }]);
+  const [maskMessages, setMaskMessages] = useState<MaskMessage[]>([{ role: "assistant", text: "Ask me anything." }]);
   const [maskBusy, setMaskBusy] = useState(false);
   const identityTokenRef = useRef<string | null>(identityToken);
   const [maskLaunchProgress, setMaskLaunchProgress] = useState<LaunchProgress | null>(null);

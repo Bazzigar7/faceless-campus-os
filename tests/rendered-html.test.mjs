@@ -180,7 +180,7 @@ test("live attendance uses expiring cohort codes and a verified roster", async (
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
   ]);
   assert.match(client, /LIVE SESSION ATTENDANCE/);
-  assert.match(client, /LIVE CHECK-IN/);
+  assert.match(client, /LIVE CLASS/);
   assert.match(client, /Attendance roster downloaded/);
   assert.match(route, /action === "check_in"/);
   assert.match(route, /That check-in code is invalid or has expired/);
@@ -380,13 +380,17 @@ test("Campus Inbox combines private actions and persists per-student read state"
   assert.match(schema, /idx_notification_reads_user_key/);
 });
 
-test("First-Day Runway guides students through verified onboarding and shows cohort readiness", async () => {
+test("Home shows one next step while the educator keeps cohort readiness", async () => {
   const [client, route] = await Promise.all([
     readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/onboarding/route.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(client, /YOUR FIRST DAY ONCHAIN/);
-  assert.match(client, /Continue first-day setup/);
+  assert.match(client, /DO THIS NEXT/);
+  assert.match(client, /firstDayState\?\.next/);
+  assert.match(client, /Learn something/);
+  assert.match(client, /home-destinations/);
+  assert.doesNotMatch(client, /RECENT ONCHAIN ACTIVITY/);
+  assert.doesNotMatch(client, /LIVE CAMPAIGN/);
   assert.match(client, /FIRST-DAY READINESS/);
   assert.match(client, /See exactly where each batch is getting stuck/);
   assert.match(route, /Create your Campus identity/);

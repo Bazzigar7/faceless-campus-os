@@ -358,12 +358,6 @@ const initialDrops: Drop[] = [
   { id: 3, title: "Builder Session Pass", host: "Campus Web3 Series", claimed: 18, supply: 75, tone: "amber" },
 ];
 
-const marketItems = [
-  { id: 1, title: "Mind Over Noise", creator: "Aarav · CSE", price: "0.018", image: "/faceless-blue.png", tag: "1 of 1" },
-  { id: 2, title: "Purple Protocol", creator: "Meera · Design", price: "0.024", image: "/faceless-purple.png", tag: "1 of 3" },
-  { id: 3, title: "Stable State", creator: "Team Orbit", price: "0.012", image: "/faceless-usdt.png", tag: "2 of 5" },
-];
-
 const rwaAssetFallbacks: RwaAsset[] = [
   { id: "campus_tower", symbol: "TOWER", name: "Campus Tower A", category: "Imaginary building", totalUnits: 1_000, priceCredits: 125, incomeModel: "Simulated rent", annualYieldBps: 680, rights: "A simulated share of the modelled rental pool; not a deed, security or legal claim.", risk: "Occupancy, maintenance and legal-enforcement risk", description: "Split a fictional student residence into digital units and explore ownership records, rent distribution and liquidity.", unitsHeld: 0, holders: 0, monthlyEstimateCredits: 0, incomeClaimedThisPeriod: false, cashflow: { grossMonthlyCredits: 1011, vacancyCredits: 51, operatingExpenseCredits: 202, reserveCredits: 51, netDistributableCredits: 707, annualYieldBps: 679, vacancyBps: 500, operatingExpenseBps: 2000, reserveBps: 500 }, creator: null },
   { id: "solar_roof", symbol: "SOLAR", name: "Solar Roof Co-op", category: "Imaginary energy asset", totalUnits: 2_500, priceCredits: 64, incomeModel: "Energy credits", annualYieldBps: 420, rights: "A simulated share of modelled energy credits; no ownership of physical panels.", risk: "Weather, equipment, pricing and counterparty risk", description: "Model how a campus solar installation could represent participation rights and simulated energy revenue.", unitsHeld: 0, holders: 0, monthlyEstimateCredits: 0, incomeClaimedThisPeriod: false, cashflow: { grossMonthlyCredits: 800, vacancyCredits: 24, operatingExpenseCredits: 120, reserveCredits: 96, netDistributableCredits: 560, annualYieldBps: 420, vacancyBps: 300, operatingExpenseBps: 1500, reserveBps: 1200 }, creator: null },
@@ -2542,64 +2536,25 @@ export default function OnchainLab() {
             }}>{classroomActivity?.status === "working" ? "Continue quest →" : "Start quest →"}</button>{classroomActivity?.status !== "completed" && <><button className="quest-proof" onClick={() => updateClassroomActivity("complete")} disabled={classroomActivityBusy}>Verify my proof</button><button className="quest-help" onClick={() => updateClassroomActivity("needs_help")} disabled={classroomActivityBusy}>I need help</button></>}</div>
           </section>}
           {active === "home" && (
-            <div className="dashboard-grid">
-              <section className="hero-panel">
-                <div className="hero-copy">
-                  <span className="eyebrow">LEARN · BUILD · PLAY · CREATE · EARN</span>
-                  <h2>Learn the idea.<br /><em>Build your version.</em></h2>
-                  <p>Mask connects 25 lessons to Ethereum and Solana testnet actions, games, projects and creator opportunities.</p>
-                  <button className="primary" onClick={resumeLearningQuest}>{learningState?.resume ? "Continue your lesson" : "Start learning"} <span>→</span></button>
-                </div>
-                <div className="hero-visual">
-                  <div className="signal-ring ring-one" />
-                  <div className="signal-ring ring-two" />
-                  <MaskOrb />
-                  <div className="speech-card">Next up: your first transaction.<small>Mask is ready when you are.</small></div>
-                </div>
+            <div className="home-simple">
+              <section className="home-welcome">
+                <div><span className="eyebrow">FACELESS CAMPUS OS</span><h2>Learn something.<br /><em>Build something.</em></h2><p>Pick up where you left off, or ask Mask for help.</p><div><button onClick={resumeLearningQuest}>{learningState?.resume ? "Continue learning" : "Start learning"} →</button><button onClick={() => setActive("mask")}>Ask Mask</button></div></div>
+                <aside><div className="signal-ring ring-one" /><MaskOrb /><span><b>{progress}%</b><small>{completed} of 25 lessons</small></span></aside>
               </section>
 
-              <section className="progress-card card">
-                <div className="section-head"><span><b>YOUR PROGRESS</b><small>Blockchain · Bitcoin · Ethereum</small></span><strong>{progress}%</strong></div>
-                <div className="progress-track"><i style={{ width: `${progress}%` }} /></div>
-                <div className="progress-stats">
-                  <span><b>{completed}</b><small>Lessons done</small></span>
-                  <span><b>03</b><small>Assets owned</small></span>
-                  <span><b>02</b><small>Test networks</small></span>
-                </div>
+              {attendanceState?.prompt && <section className="home-live-checkin"><span><i /> LIVE CLASS</span><div><b>{attendanceState.prompt.title}</b><small>Enter the code shown by your educator.</small></div><form onSubmit={(event) => { event.preventDefault(); void attendanceAction("check_in", { code: attendanceCode }); }}><input aria-label="Classroom attendance code" value={attendanceCode} onChange={(event) => { setAttendanceCode(event.target.value.toUpperCase()); setAttendanceError(""); }} placeholder="6-DIGIT CODE" maxLength={6} /><button disabled={attendanceBusy || attendanceCode.length !== 6}>{attendanceBusy ? "Checking…" : "Check in"}</button></form>{attendanceError && <em>{attendanceError}</em>}</section>}
+
+              <section className="home-next card">
+                <div><span className="eyebrow">DO THIS NEXT</span><h3>{firstDayState?.next?.title ?? (learningState?.resume ? "Continue your lesson" : "Start with blockchain basics")}</h3><p>{firstDayState?.next?.description ?? "Watch one short lesson and try the activity."}</p></div>
+                <span><b>{firstDayState ? `${firstDayState.completedCount}/${firstDayState.totalSteps}` : `${completed}/25`}</b><small>{firstDayState ? "setup complete" : "lessons complete"}</small></span>
+                <button onClick={() => firstDayState?.next ? openFirstDayStep(firstDayState.next) : resumeLearningQuest}>Continue →</button>
               </section>
 
-              {firstDayState && <section className={firstDayState.complete ? "first-day-runway complete" : "first-day-runway"}><header><div><span className="eyebrow">YOUR FIRST DAY ONCHAIN</span><h2>{firstDayState.complete ? "Runway complete." : "One clear path. No hunting around."}</h2><p>{firstDayState.complete ? "Your identity, wallets, classroom access and first proof are ready." : "Campus OS checks real account and testnet activity, then opens the exact next step."}</p></div><aside><strong>{firstDayState.completedCount}/{firstDayState.totalSteps}</strong><span>steps ready</span><i><b style={{ width: `${(firstDayState.completedCount / firstDayState.totalSteps) * 100}%` }} /></i></aside></header><div className="first-day-steps">{firstDayState.steps.map((step) => <button key={step.id} className={step.complete ? "done" : firstDayState.next?.id === step.id ? "next" : ""} onClick={() => openFirstDayStep(step)} disabled={step.complete && step.id !== "badge"}><span>{step.complete ? "✓" : step.number}</span><div><small>{step.complete ? step.detail || "VERIFIED" : firstDayState.next?.id === step.id ? "DO THIS NEXT" : "UPCOMING"}</small><b>{step.title}</b><p>{step.description}</p></div><em>{step.complete ? "DONE" : firstDayState.next?.id === step.id ? "OPEN →" : ""}</em></button>)}</div>{firstDayState.next ? <footer><span><b>Next: {firstDayState.next.title}</b><small>{firstDayState.next.description}</small></span><button onClick={() => openFirstDayStep(firstDayState.next!)}>Continue first-day setup →</button></footer> : <footer className="finished"><span><b>First Passport proof unlocked</b><small>Keep learning, building and creating to grow your verified record.</small></span><button onClick={() => setActive("passport")}>Open my Passport →</button></footer>}</section>}
-
-              {attendanceState?.prompt && <section className="attendance-checkin card"><div className="attendance-live-mark"><i /> LIVE CHECK-IN</div><div><small>{attendanceState.prompt.host}</small><h3>{attendanceState.prompt.title}</h3><p>Your educator has opened attendance for this room. Enter the code shown in class.</p></div><form onSubmit={(event) => { event.preventDefault(); void attendanceAction("check_in", { code: attendanceCode }); }}><input aria-label="Classroom attendance code" value={attendanceCode} onChange={(event) => { setAttendanceCode(event.target.value.toUpperCase()); setAttendanceError(""); }} placeholder="6-DIGIT CODE" maxLength={6} /><button disabled={attendanceBusy || attendanceCode.length !== 6}>{attendanceBusy ? "Verifying…" : "Check in →"}</button></form>{attendanceError && <span>{attendanceError}</span>}<small>Closes {new Date(attendanceState.prompt.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · tied to your verified Campus profile</small></section>}
-
-              <section className="wallet-card card">
-                <div className="section-head"><span><b>CLASSROOM WALLET</b><small>{wallet}</small></span><button onClick={() => copyWalletAddress(activeChain)}>Copy</button></div>
-                <div className="balance"><small>{activeChain === "ethereum" ? "SEPOLIA BALANCE" : "SOLANA DEVNET BALANCE"}</small><strong>{activeChain === "ethereum" ? balance.toFixed(3) : solBalance.toFixed(2)} <span>{activeChain === "ethereum" ? "ETH" : "SOL"}</span></strong><em>{usdPrices ? `≈ ${formatUsd((activeChain === "ethereum" ? balance * usdPrices.ethereum : solBalance * usdPrices.solana))} USD reference` : "Loading USD reference…"}</em><em>Testnet only · not redeemable for USD</em></div>
-                <button className={(activeChain === "ethereum" ? balance : solBalance) ? "secondary claimed" : "secondary"} onClick={() => claimCampusFaucet(activeChain)} disabled={Boolean(faucetBusy)}>{faucetBusy === activeChain ? "Sending test funds…" : `Claim test ${activeChain === "ethereum" ? "ETH" : "SOL"}`}</button>
-              </section>
-
-              <section className="quest-card card">
-                <div className="quest-index">{String((learningState?.resume?.lessonId ?? 1)).padStart(2, "0")}</div>
-                <div><span className="eyebrow">ACTIVE LESSON</span><h3>{learningState?.resume ? lessonTracks[learningState.resume.course].find((lesson) => lesson.id === learningState.resume?.lessonId)?.title : "Start with blockchain basics"}</h3><p>Watch the explainer, ask Mask a question and unlock its guided activity.</p></div>
-                <button onClick={resumeLearningQuest}>{learningState?.resume ? "Resume" : "Start"} →</button>
-              </section>
-
-              <section className="home-mission card">
-                <div className="section-head"><span><b>LIVE CAMPAIGN</b><small>Matched to your creator mode</small></span><em>₹500</em></div>
-                <div><span className="mission-logo">ST</span><span><b>Campus café experience</b><small>Sticksy · Creator · Instagram</small></span><button onClick={() => setActive("campaigns")}>View mission →</button></div>
-              </section>
-
-              <section className="activity-card card">
-                <div className="section-head"><span><b>RECENT ONCHAIN ACTIVITY</b><small>Readable by anyone</small></span><button onClick={() => setActive("wallet")}>View all</button></div>
-                <div className="activity-row"><span className="activity-icon purple">✦</span><span><b>Ethereum Lab Pass</b><small>Minted · 7 min ago</small></span><code>0x8f...21c</code></div>
-                <div className="activity-row"><span className="activity-icon green">↓</span><span><b>Received test ETH</b><small>Faceless Faucet · 12 min ago</small></span><code>0x31...aa9</code></div>
-              </section>
-
-              <section className="launch-strip card">
-                <div className="section-head"><span><b>STUDENT LAUNCHPAD</b><small>Fresh work from the classroom</small></span><button onClick={() => setActive("launchpad")}>Explore all →</button></div>
-                <div className="mini-market">
-                  {marketItems.slice(0, 3).map((item) => <button key={item.id} onClick={() => setActive("launchpad")}><img src={item.image} alt="" /><span><b>{item.title}</b><small>{item.creator}</small></span><em>{item.price} Ξ</em></button>)}
-                </div>
+              <section className="home-destinations" aria-label="Campus destinations">
+                <button onClick={() => setActive("learn")}><span>01</span><b>Learn</b><small>Watch a lesson</small><em>→</em></button>
+                <button onClick={() => setActive("mask")}><span>02</span><b>Ask Mask</b><small>Get help or plan</small><em>→</em></button>
+                <button onClick={() => setActive("wallet")}><span>03</span><b>Wallet</b><small>Claim, send, view</small><em>→</em></button>
+                <button onClick={() => setActive("campaigns")}><span>04</span><b>Campaigns</b><small>Create and earn</small><em>→</em></button>
               </section>
             </div>
           )}

@@ -36,7 +36,8 @@ type FaucetNetwork = Chain | "robinhood";
 type LaunchMode = "testnet" | "mainnet";
 type Lesson = { id: number; title: string; copy: string; time: string; unit: string; state: string; action: string; video?: string; course: Course };
 type Recipient = { username: string; displayName: string; wallets: Array<{ chain: Chain; address: string }> };
-type TransferReceipt = { chain: Chain; hash: string; username: string; amount: string; explorer: string };
+type TransferReceipt = { chain: FaucetNetwork; hash: string; recipient: string; amount: string; explorer: string };
+type RecipientSuggestion = { username: string; displayName: string };
 type FaucetChainState = { chain: FaucetNetwork; amount: string; maxClaims: number; claimsUsed: number; enabled: boolean; configured: boolean; distributorAddress?: string };
 type FaucetState = {
   role: "student" | "educator" | "owner";
@@ -131,7 +132,7 @@ type TokenAirdrop = {
   pendingCount: number;
   ownClaim: { status: "queued" | "processing" | "sent" | "failed"; transactionHash?: string | null; errorMessage?: string | null } | null;
 };
-type WalletAssetView = "all" | "tokens" | "nfts";
+type WalletAssetView = "overall" | FaucetNetwork;
 type UsdPrices = { ethereum: number; solana: number; updatedAt: number };
 type WalletNft = {
   id: string;
@@ -410,6 +411,7 @@ function identityTokenExpiresSoon(token: string, leewaySeconds = 30) {
 
 const solanaDevnetRpc = createSolanaRpc("/api/solana-rpc");
 const sepoliaPublicClient = createPublicClient({ chain: sepolia, transport: http() });
+const robinhoodPublicClient = createPublicClient({ transport: http("https://rpc.testnet.chain.robinhood.com") });
 const campusEditionMintAbi = [{
   type: "function",
   name: "mint",
@@ -439,6 +441,7 @@ export default function OnchainLab() {
   const [loading, setLoading] = useState(false);
   const [balance, setBalance] = useState(0);
   const [solBalance, setSolBalance] = useState(0);
+  const [robinhoodBalance, setRobinhoodBalance] = useState(0);
   const [activeChain, setActiveChain] = useState<Chain>("ethereum");
   const [headClaimed, setHeadClaimed] = useState(false);
   const [toast, setToast] = useState("");
@@ -496,7 +499,7 @@ export default function OnchainLab() {
   const [launchTransactionStatus, setLaunchTransactionStatus] = useState<LaunchTransactionStatus>("idle");
   const [launchTransactionError, setLaunchTransactionError] = useState("");
   const [launchDeployment, setLaunchDeployment] = useState<LaunchDeployment | null>(null);
-  const [walletAssetView, setWalletAssetView] = useState<WalletAssetView>("all");
+  const [walletAssetView, setWalletAssetView] = useState<WalletAssetView>("overall");
   const [walletNfts, setWalletNfts] = useState<WalletNft[]>([]);
   const [campusTokens, setCampusTokens] = useState<CampusToken[]>([]);
   const [walletAssetsLoading, setWalletAssetsLoading] = useState(false);
@@ -545,7 +548,11 @@ export default function OnchainLab() {
   const [profileStatus, setProfileStatus] = useState<"idle" | "saving" | "ready" | "error">("idle");
   const [profileError, setProfileError] = useState("");
   const [recipientName, setRecipientName] = useState("");
+  const [recipientSuggestions, setRecipientSuggestions] = useState<RecipientSuggestion[]>([]);
   const [recipient, setRecipient] = useState<Recipient | null>(null);
+  const [transferNetwork, setTransferNetwork] = useState<FaucetNetwork>("ethereum");
+  const [transferTargetMode, setTransferTargetMode] = useState<"username" | "address">("username");
+  const [directRecipientAddress, setDirectRecipientAddress] = useState("");
   const [transferAmount, setTransferAmount] = useState("");
   const [transferStatus, setTransferStatus] = useState<"idle" | "resolving" | "ready" | "sending" | "sent" | "error">("idle");
   const [transferError, setTransferError] = useState("");
@@ -598,6 +605,8 @@ export default function OnchainLab() {
   });
   const selectedMarket = marketCollections.find((collection) => collection.id === selectedMarketId) ?? null;
   const selectedToken = campusTokens.find((token) => token.id === selectedTokenId) ?? null;
+  const visibleWalletTokens = campusTokens.filter((token) => BigInt(token.owned) > 0n && (walletAssetView === "overall" || token.chain === walletAssetView));
+  const visibleWalletNfts = walletNfts.filter((asset) => walletAssetView === "overall" || asset.chain === walletAssetView);
   const liveRwaAssets = rwaState?.assets ?? rwaAssetFallbacks;
   const rwaDistributionMs = Math.max(0, new Date(rwaState?.nextDistributionAt ?? new Date(Date.now() + 30 * 86_400_000).toISOString()).getTime() - rwaClock);
   const rwaDistributionCountdown = `${Math.floor(rwaDistributionMs / 86_400_000)}d ${Math.floor((rwaDistributionMs % 86_400_000) / 3_600_000)}h`;
@@ -607,6 +616,25 @@ export default function OnchainLab() {
   useEffect(() => {
     identityTokenRef.current = identityToken;
   }, [identityToken]);
+
+  useEffect(() => {
+    const query = recipientName.trim().toLowerCase().replace(/^@/, "");
+    if (!identityToken || transferTargetMode !== "username" || query.length < 1 || recipient?.username.replace(/^@/, "") === query) {
+      setRecipientSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/resolve?query=${encodeURIComponent(query)}`, { headers: { "privy-id-token": identityToken } });
+        const result = await response.json() as { suggestions?: RecipientSuggestion[] };
+        if (!cancelled) setRecipientSuggestions(response.ok ? result.suggestions ?? [] : []);
+      } catch {
+        if (!cancelled) setRecipientSuggestions([]);
+      }
+    }, 180);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [recipientName, identityToken, transferTargetMode, recipient?.username]);
 
   useEffect(() => {
     if (authenticated) setLoading(false);
@@ -1576,10 +1604,12 @@ export default function OnchainLab() {
   async function refreshBalances() {
     if (ethereumWallet) {
       try {
-        await ethereumWallet.switchChain(11155111);
-        const provider = await ethereumWallet.getEthereumProvider();
-        const result = await provider.request({ method: "eth_getBalance", params: [ethereumWallet.address, "latest"] });
-        if (typeof result === "string") setBalance(Number(BigInt(result)) / 1e18);
+        const [sepoliaBalance, robinhoodTestnetBalance] = await Promise.all([
+          sepoliaPublicClient.getBalance({ address: ethereumWallet.address as Hex }),
+          robinhoodPublicClient.getBalance({ address: ethereumWallet.address as Hex }),
+        ]);
+        setBalance(Number(sepoliaBalance) / 1e18);
+        setRobinhoodBalance(Number(robinhoodTestnetBalance) / 1e18);
       } catch {
         // A balance refresh should never interrupt the classroom UI.
       }
@@ -1594,9 +1624,8 @@ export default function OnchainLab() {
     }
   }
 
-  async function resolveRecipient(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const clean = recipientName.trim().toLowerCase().replace(/^@/, "");
+  async function resolveCampusRecipient(cleanUsername: string) {
+    const clean = cleanUsername.trim().toLowerCase().replace(/^@/, "");
     if (!/^[a-z][a-z0-9_]{2,23}$/.test(clean)) {
       setTransferStatus("error");
       setTransferError("Enter a valid Campus username");
@@ -1608,14 +1637,19 @@ export default function OnchainLab() {
     setRecipient(null);
     setTransferReceipt(null);
     try {
-      const response = await fetch(`/api/resolve/${encodeURIComponent(clean)}`);
+      const requestToken = await campusIdentityToken();
+      if (!requestToken) throw new Error("Your Campus session expired. Please sign in again.");
+      const response = await fetch(`/api/resolve/${encodeURIComponent(clean)}`, { headers: { "privy-id-token": requestToken } });
       const result = await response.json() as Recipient & { error?: string };
       if (!response.ok) throw new Error(result.error ?? "Username not found");
-      const chainWallet = result.wallets.find((item) => item.chain === activeChain);
-      if (!chainWallet) throw new Error(`@${clean} does not have a ${activeChain === "ethereum" ? "Sepolia" : "Solana Devnet"} wallet`);
-      const ownAddress = activeChain === "ethereum" ? ethereumWallet?.address : solanaWallet?.address;
+      const walletChain = transferNetwork === "solana" ? "solana" : "ethereum";
+      const chainWallet = result.wallets.find((item) => item.chain === walletChain);
+      if (!chainWallet) throw new Error(`@${clean} does not have the required Campus wallet`);
+      const ownAddress = walletChain === "ethereum" ? ethereumWallet?.address : solanaWallet?.address;
       if (ownAddress?.toLowerCase() === chainWallet.address.toLowerCase()) throw new Error("Choose another student—you cannot send this practice transfer to yourself");
       setRecipient(result);
+      setRecipientName(result.username);
+      setRecipientSuggestions([]);
       setTransferStatus("ready");
     } catch (error) {
       setTransferStatus("error");
@@ -1623,26 +1657,39 @@ export default function OnchainLab() {
     }
   }
 
+  async function resolveRecipient(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await resolveCampusRecipient(recipientName);
+  }
+
   async function sendTestnetTransfer(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const destination = recipient?.wallets.find((item) => item.chain === activeChain)?.address;
-    if (!recipient || !destination) return;
+    const walletChain = transferNetwork === "solana" ? "solana" : "ethereum";
+    const destination = transferTargetMode === "username"
+      ? recipient?.wallets.find((item) => item.chain === walletChain)?.address
+      : directRecipientAddress.trim();
+    if (!destination) return setTransferError(transferTargetMode === "username" ? "Choose a Campus username" : "Enter a wallet address");
+    if (walletChain === "ethereum" && !isAddress(destination)) return setTransferError("Enter a valid 0x wallet address");
+    const recipientLabel = transferTargetMode === "username" ? recipient?.username ?? recipientName : shortenAddress(destination);
 
     setTransferStatus("sending");
     setTransferError("");
     try {
-      if (activeChain === "ethereum") {
+      if (walletChain === "ethereum") {
         if (!ethereumWallet) throw new Error("Ethereum wallet is unavailable");
         const value = decimalToUnits(transferAmount, 18);
-        if (value <= 0n || value > 50_000_000_000_000_000n) throw new Error("Send between 0 and 0.05 test ETH");
-        await ethereumWallet.switchChain(11155111);
+        const maxValue = transferNetwork === "robinhood" ? 5_000_000_000_000_000n : 50_000_000_000_000_000n;
+        if (value <= 0n || value > maxValue) throw new Error(`Send between 0 and ${transferNetwork === "robinhood" ? "0.005" : "0.05"} test ETH`);
+        const chainId = transferNetwork === "robinhood" ? 46630 : 11155111;
+        await ethereumWallet.switchChain(chainId);
         const { hash } = await sendEthereumTransaction(
-          { to: destination, value, chainId: 11155111 },
+          { to: destination as Hex, value, chainId },
           { address: ethereumWallet.address, uiOptions: { showWalletUIs: true } },
         );
-        setTransferReceipt({ chain: "ethereum", hash, username: recipient.username, amount: transferAmount, explorer: `https://sepolia.etherscan.io/tx/${hash}` });
+        setTransferReceipt({ chain: transferNetwork, hash, recipient: recipientLabel, amount: transferAmount, explorer: faucetNetworkMeta[transferNetwork].explorer(hash) });
       } else {
         if (!solanaWallet) throw new Error("Solana wallet is unavailable");
+        address(destination);
         const lamports = decimalToUnits(transferAmount, 9);
         if (lamports <= 0n || lamports > 1_000_000_000n) throw new Error("Send between 0 and 1 test SOL");
         await waitForCampusSolanaTurn();
@@ -1662,10 +1709,10 @@ export default function OnchainLab() {
         );
         const { signature } = await sendCampusSolanaTransaction(transaction);
         const hash = getBase58Decoder().decode(signature);
-        setTransferReceipt({ chain: "solana", hash, username: recipient.username, amount: transferAmount, explorer: `https://explorer.solana.com/tx/${hash}?cluster=devnet` });
+        setTransferReceipt({ chain: "solana", hash, recipient: recipientLabel, amount: transferAmount, explorer: `https://explorer.solana.com/tx/${hash}?cluster=devnet` });
       }
       setTransferStatus("sent");
-      notify(`Testnet transfer sent to ${recipient.username}`);
+      notify(`Testnet transfer sent to ${recipientLabel}`);
       window.setTimeout(() => void refreshBalances(), 1800);
     } catch (error) {
       setTransferStatus("error");
@@ -1684,7 +1731,9 @@ export default function OnchainLab() {
     setTokenBusy(true);
     setTokenError("");
     try {
-      const resolvedResponse = await fetch(`/api/resolve/${encodeURIComponent(cleanUsername)}`);
+      const resolveToken = await campusIdentityToken();
+      if (!resolveToken) throw new Error("Your Campus session expired. Please sign in again.");
+      const resolvedResponse = await fetch(`/api/resolve/${encodeURIComponent(cleanUsername)}`, { headers: { "privy-id-token": resolveToken } });
       const resolved = await resolvedResponse.json() as Recipient & { error?: string };
       if (!resolvedResponse.ok) throw new Error(resolved.error ?? "Username not found");
       const destination = resolved.wallets.find((item) => item.chain === selectedToken.chain)?.address;
@@ -1856,15 +1905,6 @@ export default function OnchainLab() {
     } finally {
       setAirdropBusy(false);
     }
-  }
-
-  function resetTransferForChain(chain: Chain) {
-    setActiveChain(chain);
-    setRecipient(null);
-    setTransferAmount("");
-    setTransferError("");
-    setTransferReceipt(null);
-    setTransferStatus("idle");
   }
 
   function claimHead() {
@@ -2621,71 +2661,50 @@ export default function OnchainLab() {
 
           {active === "wallet" && (
             <div className="page-stack">
-              <section className="wallet-hero">
-                <div><span className="eyebrow">YOUR MULTICHAIN CLASSROOM IDENTITY</span><h2>{wallet}</h2><p>{authenticated ? "Your Privy wallets are ready for supervised Ethereum and Solana practice." : "Demo identity · sign in with Google to create your real classroom wallets."}</p></div>
-                <div className="wallet-balance"><small>{activeChain === "ethereum" ? "SEPOLIA BALANCE" : "SOLANA DEVNET BALANCE"}</small><strong>{activeChain === "ethereum" ? `${balance.toFixed(4)} ETH` : `${solBalance.toFixed(3)} SOL`}</strong><em>{usdPrices ? `≈ ${formatUsd(activeChain === "ethereum" ? balance * usdPrices.ethereum : solBalance * usdPrices.solana)} USD reference` : "Loading USD reference…"}</em><button onClick={() => claimCampusFaucet(activeChain)}>Claim from Campus Faucet ↓</button></div>
-              </section>
-              <div className="dual-wallets"><button className={activeChain === "ethereum" ? "active" : ""} onClick={() => resetTransferForChain("ethereum")}><span className="chain-coin eth">Ξ</span><span><small>ETHEREUM CLASSROOM WALLET</small><b>{ethWallet}</b><em>{balance.toFixed(4)} test ETH · Sepolia</em></span><strong>Open →</strong></button><button className={activeChain === "solana" ? "active" : ""} onClick={() => resetTransferForChain("solana")}><span className="chain-coin sol">S</span><span><small>SOLANA CLASSROOM WALLET</small><b>{solWallet}</b><em>{solBalance.toFixed(3)} test SOL · Devnet</em></span><strong>Open →</strong></button></div>
-              <section className="wallet-addresses card" aria-label="Full classroom wallet addresses">
-                <div className="section-head"><span><b>YOUR WALLET ADDRESSES</b><small>Use these when funding or receiving testnet assets</small></span></div>
-                <div className="wallet-address-row">
-                  <span className="chain-coin eth">Ξ</span>
-                  <span><small>ETHEREUM · SEPOLIA</small><code>{ethWalletAddress}</code></span>
-                  <button onClick={() => copyWalletAddress("ethereum")}>Copy ETH address</button>
+              <section className="wallet-console card">
+                <header><div><span className="eyebrow">WALLET & TEST FUNDS</span><h2>{campusUsername ? `@${campusUsername}` : wallet}</h2></div><small><i /> TESTNET ONLY</small></header>
+                <div className="wallet-console-addresses">
+                  <article><span className="chain-coin eth">Ξ</span><div><small>EVM ADDRESS · SEPOLIA + ROBINHOOD</small><code>{ethWalletAddress}</code></div><button onClick={() => copyWalletAddress("ethereum")}>Copy</button></article>
+                  <article><span className="chain-coin sol">S</span><div><small>SOLANA ADDRESS · DEVNET</small><code>{solWalletAddress}</code></div><button onClick={() => copyWalletAddress("solana")}>Copy</button></article>
                 </div>
-                <div className="wallet-address-row">
-                  <span className="chain-coin sol">S</span>
-                  <span><small>SOLANA · DEVNET</small><code>{solWalletAddress}</code></span>
-                  <button onClick={() => copyWalletAddress("solana")}>Copy SOL address</button>
-                </div>
-              </section>
-              <section className="campus-faucet card">
-                <div className="faucet-intro">
-                  <span className="eyebrow">FACELESS CAMPUS FAUCET</span>
-                  <h3>Test funds without the Wi-Fi queue.</h3>
-                  <p>Claims are tied to your verified Campus account, not the shared college internet connection.</p>
-                  <span className="faucet-safe"><i /> Testnet only · no real monetary value</span>
-                </div>
-                <div className="faucet-options">
+                <div className="wallet-console-claims">
                   {(["ethereum", "solana", "robinhood"] as const).map((chain) => {
                     const config = faucetState?.chains.find((item) => item.chain === chain);
                     const meta = faucetNetworkMeta[chain];
                     const remaining = Math.max(0, (config?.maxClaims ?? 1) - (config?.claimsUsed ?? 0));
                     const ready = Boolean(config?.enabled && config.configured && faucetState?.signerReady);
-                    return <article key={chain}>
-                      <div className="faucet-chain"><span className={`chain-coin ${meta.className}`}>{meta.icon}</span><span><small>{meta.label}</small><b>{config?.amount ?? meta.fallback} {meta.asset}</b></span></div>
-                      <div className="faucet-availability"><span>{remaining} of {config?.maxClaims ?? 1} claims left</span><i><b style={{ width: `${((config?.claimsUsed ?? 0) / Math.max(1, config?.maxClaims ?? 1)) * 100}%` }} /></i></div>
-                      <button disabled={!ready || remaining === 0 || Boolean(faucetBusy)} onClick={() => claimCampusFaucet(chain)}>{faucetBusy === chain ? "Sending…" : remaining === 0 ? "Claim limit reached ✓" : ready ? `Claim ${chain === "robinhood" ? "Robinhood test ETH" : `test ${meta.asset}`}` : "Opening soon"}</button>
-                    </article>;
+                    return <button key={chain} disabled={!ready || remaining === 0 || Boolean(faucetBusy)} onClick={() => claimCampusFaucet(chain)}><span className={`chain-coin ${meta.className}`}>{meta.icon}</span><span><small>{meta.label}</small><b>{config?.amount ?? meta.fallback} {meta.asset}</b></span><em>{faucetBusy === chain ? "Sending…" : remaining === 0 ? "Claimed ✓" : ready ? "Claim" : "Soon"}</em></button>;
                   })}
-                  {faucetError && <div className="faucet-message">{faucetError}</div>}
-                  {faucetState?.recent[0] && <div className={`faucet-recent ${faucetState.recent[0].status}`}><span>{faucetState.recent[0].status === "sent" ? "✓" : faucetState.recent[0].status === "failed" ? "!" : "…"}</span><div><small>LATEST CLAIM</small><b>{faucetState.recent[0].amount} {faucetNetworkMeta[faucetState.recent[0].chain].label.replace(" · ", " ")} · {faucetState.recent[0].status}</b></div>{faucetState.recent[0].transactionHash && <a href={faucetNetworkMeta[faucetState.recent[0].chain].explorer(faucetState.recent[0].transactionHash)} target="_blank" rel="noreferrer">View receipt ↗</a>}</div>}
                 </div>
+                {faucetError && <div className="faucet-message">{faucetError}</div>}
+                {faucetState?.recent[0] && <div className="wallet-console-recent"><span>✓ Latest claim</span><b>{faucetState.recent[0].amount} {faucetNetworkMeta[faucetState.recent[0].chain].asset}</b>{faucetState.recent[0].transactionHash && <a href={faucetNetworkMeta[faucetState.recent[0].chain].explorer(faucetState.recent[0].transactionHash)} target="_blank" rel="noreferrer">Receipt ↗</a>}</div>}
               </section>
-              {authenticated && <section className="transfer-lab card">
-                <div className="transfer-intro"><span className="eyebrow">SEND BY CAMPUS USERNAME</span><h3>Your first real testnet transfer.</h3><p>Find a classmate by username, verify the resolved wallet, then approve the transaction yourself. Test assets have no real value.</p><div className="transfer-steps"><span className={recipient ? "done" : "active"}><b>1</b> Find</span><span className={recipient && transferStatus !== "sent" ? "active" : transferStatus === "sent" ? "done" : ""}><b>2</b> Review</span><span className={transferStatus === "sent" ? "done" : ""}><b>3</b> Approve</span></div></div>
-                <div className="transfer-panel">
-                  <div className="transfer-network"><span className={`chain-coin ${activeChain === "ethereum" ? "eth" : "sol"}`}>{activeChain === "ethereum" ? "Ξ" : "S"}</span><span><small>SENDING ON</small><b>{activeChain === "ethereum" ? "Ethereum Sepolia" : "Solana Devnet"}</b></span><em>TESTNET</em></div>
-                  <form className="recipient-search" onSubmit={resolveRecipient}><label htmlFor="recipient-name">Recipient username</label><div><span>@</span><input id="recipient-name" value={recipientName} onChange={(event) => { setRecipientName(event.target.value); setRecipient(null); setTransferReceipt(null); setTransferStatus("idle"); setTransferError(""); }} placeholder="classmate" autoComplete="off" /><button disabled={transferStatus === "resolving"}>{transferStatus === "resolving" ? "Finding…" : "Find wallet"}</button></div></form>
-                  {recipient && <form className="transfer-review" onSubmit={sendTestnetTransfer}><div className="resolved-person"><span>✓</span><div><small>VERIFIED CAMPUS RECIPIENT</small><b>{recipient.username} · {recipient.displayName}</b><code>{shortenAddress(recipient.wallets.find((item) => item.chain === activeChain)?.address ?? "")}</code></div><button type="button" onClick={() => { setRecipient(null); setTransferStatus("idle"); }}>Change</button></div><label htmlFor="transfer-amount">Amount in test {activeChain === "ethereum" ? "ETH" : "SOL"}</label><div className="amount-row"><input id="transfer-amount" inputMode="decimal" value={transferAmount} onChange={(event) => { setTransferAmount(event.target.value); setTransferError(""); }} placeholder={activeChain === "ethereum" ? "0.001" : "0.01"} /><span>{activeChain === "ethereum" ? "ETH" : "SOL"}</span><button disabled={transferStatus === "sending" || !transferAmount}>{transferStatus === "sending" ? "Waiting for approval…" : `Review & send →`}</button></div><small className="transfer-limit">Classroom limit: 0.05 test ETH or 1 test SOL per transfer. Privy shows the final confirmation.</small></form>}
-                  {transferError && <div className="transfer-message error">{transferError}</div>}
-                  {transferReceipt && <div className="transfer-message success"><span>✓</span><div><b>Transfer submitted to {transferReceipt.username}</b><small>{transferReceipt.amount} {transferReceipt.chain === "ethereum" ? "test ETH" : "test SOL"}</small></div><a href={transferReceipt.explorer} target="_blank" rel="noreferrer">View transaction ↗</a></div>}
-                </div>
+              {authenticated && <section className="send-tokens card">
+                <header><div><span className="eyebrow">SEND TOKENS</span><h3>Choose a network and recipient.</h3></div><small>Your wallet approves every transfer</small></header>
+                <form onSubmit={transferTargetMode === "username" && !recipient ? resolveRecipient : sendTestnetTransfer}>
+                  <label>Network<select value={transferNetwork} onChange={(event) => { setTransferNetwork(event.target.value as FaucetNetwork); setTransferReceipt(null); setTransferError(""); }}><option value="ethereum">Ethereum · Sepolia</option><option value="solana">Solana · Devnet</option><option value="robinhood">Robinhood Chain · Testnet</option></select></label>
+                  <div className="send-target-mode"><button type="button" className={transferTargetMode === "username" ? "active" : ""} onClick={() => { setTransferTargetMode("username"); setTransferError(""); }}>Campus username</button><button type="button" className={transferTargetMode === "address" ? "active" : ""} onClick={() => { setTransferTargetMode("address"); setRecipient(null); setRecipientSuggestions([]); setTransferError(""); }}>Wallet address</button></div>
+                  {transferTargetMode === "username" ? <label className="send-recipient">Recipient<div><span>@</span><input value={recipientName.replace(/^@/, "")} onChange={(event) => { setRecipientName(event.target.value); setRecipient(null); setTransferReceipt(null); setTransferStatus("idle"); setTransferError(""); }} placeholder="Start typing a name" autoComplete="off" /></div>{recipientSuggestions.length > 0 && <aside>{recipientSuggestions.map((suggestion) => <button type="button" key={suggestion.username} onClick={() => void resolveCampusRecipient(suggestion.username)}><span>{suggestion.displayName.slice(0, 2).toUpperCase()}</span><b>@{suggestion.username}</b><small>{suggestion.displayName}</small></button>)}</aside>}{recipient && <em>✓ {recipient.username} · {shortenAddress(recipient.wallets.find((item) => item.chain === (transferNetwork === "solana" ? "solana" : "ethereum"))?.address ?? "")}</em>}</label> : <label>Wallet address<input value={directRecipientAddress} onChange={(event) => { setDirectRecipientAddress(event.target.value); setTransferReceipt(null); setTransferError(""); }} placeholder={transferNetwork === "solana" ? "Solana address" : "0x… address"} autoComplete="off" /></label>}
+                  <label>Amount<div className="send-amount"><input inputMode="decimal" value={transferAmount} onChange={(event) => { setTransferAmount(event.target.value); setTransferError(""); }} placeholder={transferNetwork === "solana" ? "0.01" : "0.001"} /><span>{transferNetwork === "solana" ? "SOL" : "ETH"}</span></div></label>
+                  <button className="send-submit" disabled={transferStatus === "sending" || (transferTargetMode === "username" && !recipient ? !recipientName.trim() : !transferAmount || (transferTargetMode === "address" && !directRecipientAddress))}>{transferStatus === "sending" ? "Check your wallet…" : transferTargetMode === "username" && !recipient ? "Find student →" : "Review & send →"}</button>
+                </form>
+                {transferError && <div className="transfer-message error">{transferError}</div>}
+                {transferReceipt && <div className="transfer-message success"><span>✓</span><div><b>Sent to {transferReceipt.recipient}</b><small>{transferReceipt.amount} {faucetNetworkMeta[transferReceipt.chain].asset}</small></div><a href={transferReceipt.explorer} target="_blank" rel="noreferrer">Receipt ↗</a></div>}
               </section>}
               {authenticated && <section className="wallet-control card"><div><span className="eyebrow">YOU CONTROL YOUR WALLETS</span><h3>Connect or export whenever you need.</h3><p>Faceless never receives or stores your private keys. Export opens Privy’s protected wallet screen.</p></div><div><button onClick={() => linkWallet({ walletChainType: "ethereum-and-solana" })}>Connect MetaMask or Phantom</button><button disabled={!ethereumWallet} onClick={() => exportWallet("ethereum")}>Export Ethereum</button><button disabled={!solanaWallet} onClick={() => exportWallet("solana")}>Export Solana</button></div></section>}
               <section className="wallet-assets card">
-                <div className="wallet-assets-head"><div><span className="eyebrow">YOUR ONCHAIN ITEMS</span><h3>Tokens, NFTs and everything you launch.</h3><p>Campus OS shows test funds and assets created through the launchpad in one place.</p></div><button disabled={walletAssetsLoading} onClick={() => void loadWalletAssets()}>{walletAssetsLoading ? "Refreshing…" : "Refresh assets ↻"}</button></div>
-                <div className="wallet-asset-tabs" role="tablist" aria-label="Wallet asset type">{(["all", "tokens", "nfts"] as WalletAssetView[]).map((view) => <button role="tab" aria-selected={walletAssetView === view} className={walletAssetView === view ? "active" : ""} key={view} onClick={() => setWalletAssetView(view)}>{view === "all" ? "All assets" : view === "tokens" ? "Tokens" : "NFTs"}</button>)}</div>
-                {(walletAssetView === "all" || walletAssetView === "tokens") && <div className="wallet-token-grid">
-                  <article><span className="chain-coin eth">Ξ</span><div><small>ETHEREUM · SEPOLIA</small><b>{balance.toFixed(4)} ETH</b><strong>{usdPrices ? `≈ ${formatUsd(balance * usdPrices.ethereum)}` : "USD reference unavailable"}</strong><em>Reference only · test token</em></div><a href={`https://sepolia.etherscan.io/address/${ethWalletAddress}`} target="_blank" rel="noreferrer">Explorer ↗</a></article>
-                  <article><span className="chain-coin sol">S</span><div><small>SOLANA · DEVNET</small><b>{solBalance.toFixed(3)} SOL</b><strong>{usdPrices ? `≈ ${formatUsd(solBalance * usdPrices.solana)}` : "USD reference unavailable"}</strong><em>Reference only · test token</em></div><a href={`https://explorer.solana.com/address/${solWalletAddress}?cluster=devnet`} target="_blank" rel="noreferrer">Explorer ↗</a></article>
-                  {campusTokens.filter((token) => BigInt(token.owned) > 0n).map((token) => <article key={token.id}><span className={`chain-coin ${token.chain === "ethereum" ? "eth" : "sol"}`}>{token.symbol.slice(0, 2)}</span><div><small>{token.standard.toUpperCase()} · {token.chain === "ethereum" ? "SEPOLIA" : "SOLANA DEVNET"}</small><b>{Number(token.owned).toLocaleString()} {token.symbol}</b><strong>Campus token · no USD value</strong><em>{token.authorityMode === "revoke" ? "Fixed supply" : "Creator mint authority active"}</em></div><button onClick={() => { setSelectedTokenId(token.id); setMarketArea("tokens"); setActive("market"); }}>Send →</button></article>)}
-                </div>}
-                {(walletAssetView === "all" || walletAssetView === "nfts") && <div className="wallet-nft-area">
-                  <div className="wallet-nft-title"><b>NFTs in your Campus wallet</b><small>{walletNfts.length} launchpad item{walletNfts.length === 1 ? "" : "s"}</small></div>
-                  {walletAssetsLoading && walletNfts.length === 0 ? <div className="wallet-assets-empty">Reading your Campus launches…</div> : walletAssetsError ? <div className="wallet-assets-empty error">{walletAssetsError}</div> : walletNfts.length ? <div className="wallet-nft-grid">{walletNfts.map((asset) => <article key={asset.id} className="wallet-nft-card"><img src={asset.image} alt={asset.name} /><div><span><small>{asset.standard} · {asset.network === "sepolia" ? "SEPOLIA" : "SOLANA DEVNET"}</small><b>{asset.name}</b><em>{asset.quantity} owned · edition supply {asset.maxSupply}</em></span><div>{asset.contractAddress && <a href={asset.chain === "ethereum" ? `https://sepolia.etherscan.io/address/${asset.contractAddress}` : `https://core.metaplex.com/explorer/${asset.contractAddress}?env=devnet`} target="_blank" rel="noreferrer">{asset.chain === "ethereum" ? "Contract" : "Collection"} ↗</a>}{asset.assetAddress && <a href={`https://core.metaplex.com/explorer/${asset.assetAddress}?env=devnet`} target="_blank" rel="noreferrer">NFT ↗</a>}{asset.mintTransactionHash && <a href={asset.chain === "ethereum" ? `https://sepolia.etherscan.io/tx/${asset.mintTransactionHash}` : `https://explorer.solana.com/tx/${asset.mintTransactionHash}?cluster=devnet`} target="_blank" rel="noreferrer">Mint receipt ↗</a>}<a href={asset.metadata} target="_blank" rel="noreferrer">Metadata ↗</a></div></div></article>)}</div> : <div className="wallet-assets-empty"><b>No launchpad NFTs yet.</b><span>Mint an NFT on testnet and it will appear here automatically.</span><button onClick={() => setActive("create")}>Launch your first NFT →</button></div>}
-                </div>}
-                <small className="wallet-assets-note">Incoming assets from outside Campus OS will be added when the full testnet indexer is connected.</small>
+                <div className="wallet-assets-head"><div><span className="eyebrow">HOLDINGS</span><h3>Everything in your Campus wallets.</h3></div><button disabled={walletAssetsLoading} onClick={() => { void refreshBalances(); void loadWalletAssets(); }}>{walletAssetsLoading ? "Refreshing…" : "Refresh ↻"}</button></div>
+                <div className="wallet-asset-tabs" role="tablist" aria-label="Holdings network">{(["overall", "ethereum", "solana", "robinhood"] as WalletAssetView[]).map((view) => <button role="tab" aria-selected={walletAssetView === view} className={walletAssetView === view ? "active" : ""} key={view} onClick={() => setWalletAssetView(view)}>{view === "overall" ? "Overall" : view === "ethereum" ? "Ethereum" : view === "solana" ? "Solana" : "Robinhood"}</button>)}</div>
+                <div className="wallet-token-grid">
+                  {(walletAssetView === "overall" || walletAssetView === "ethereum") && <article><span className="chain-coin eth">Ξ</span><div><small>ETHEREUM · SEPOLIA</small><b>{balance.toFixed(4)} ETH</b><strong>{usdPrices ? `≈ ${formatUsd(balance * usdPrices.ethereum)}` : "USD reference unavailable"}</strong><em>Reference only · test token</em></div><a href={`https://sepolia.etherscan.io/address/${ethWalletAddress}`} target="_blank" rel="noreferrer">Explorer ↗</a></article>}
+                  {(walletAssetView === "overall" || walletAssetView === "solana") && <article><span className="chain-coin sol">S</span><div><small>SOLANA · DEVNET</small><b>{solBalance.toFixed(3)} SOL</b><strong>{usdPrices ? `≈ ${formatUsd(solBalance * usdPrices.solana)}` : "USD reference unavailable"}</strong><em>Reference only · test token</em></div><a href={`https://explorer.solana.com/address/${solWalletAddress}?cluster=devnet`} target="_blank" rel="noreferrer">Explorer ↗</a></article>}
+                  {(walletAssetView === "overall" || walletAssetView === "robinhood") && <article><span className="chain-coin rh">R</span><div><small>ROBINHOOD CHAIN · TESTNET</small><b>{robinhoodBalance.toFixed(4)} ETH</b><strong>{usdPrices ? `≈ ${formatUsd(robinhoodBalance * usdPrices.ethereum)}` : "USD reference unavailable"}</strong><em>Reference only · test token</em></div><a href={`https://explorer.testnet.chain.robinhood.com/address/${ethWalletAddress}`} target="_blank" rel="noreferrer">Explorer ↗</a></article>}
+                  {visibleWalletTokens.map((token) => <article key={token.id}><span className={`chain-coin ${token.chain === "ethereum" ? "eth" : "sol"}`}>{token.symbol.slice(0, 2)}</span><div><small>{token.standard.toUpperCase()} · {token.chain === "ethereum" ? "SEPOLIA" : "SOLANA DEVNET"}</small><b>{Number(token.owned).toLocaleString()} {token.symbol}</b><strong>Campus token · no USD value</strong><em>{token.authorityMode === "revoke" ? "Fixed supply" : "Creator mint authority active"}</em></div><button onClick={() => { setSelectedTokenId(token.id); setMarketArea("tokens"); setActive("market"); }}>Send →</button></article>)}
+                </div>
+                <div className="wallet-nft-area">
+                  <div className="wallet-nft-title"><b>NFTs</b><small>{visibleWalletNfts.length} item{visibleWalletNfts.length === 1 ? "" : "s"}</small></div>
+                  {walletAssetsLoading && walletNfts.length === 0 ? <div className="wallet-assets-empty">Reading your holdings…</div> : walletAssetsError ? <div className="wallet-assets-empty error">{walletAssetsError}</div> : visibleWalletNfts.length ? <div className="wallet-nft-grid">{visibleWalletNfts.map((asset) => <article key={asset.id} className="wallet-nft-card"><img src={asset.image} alt={asset.name} /><div><span><small>{asset.standard} · {asset.network === "sepolia" ? "SEPOLIA" : "SOLANA DEVNET"}</small><b>{asset.name}</b><em>{asset.quantity} owned · edition supply {asset.maxSupply}</em></span><div>{asset.contractAddress && <a href={asset.chain === "ethereum" ? `https://sepolia.etherscan.io/address/${asset.contractAddress}` : `https://core.metaplex.com/explorer/${asset.contractAddress}?env=devnet`} target="_blank" rel="noreferrer">{asset.chain === "ethereum" ? "Contract" : "Collection"} ↗</a>}{asset.assetAddress && <a href={`https://core.metaplex.com/explorer/${asset.assetAddress}?env=devnet`} target="_blank" rel="noreferrer">NFT ↗</a>}{asset.mintTransactionHash && <a href={asset.chain === "ethereum" ? `https://sepolia.etherscan.io/tx/${asset.mintTransactionHash}` : `https://explorer.solana.com/tx/${asset.mintTransactionHash}?cluster=devnet`} target="_blank" rel="noreferrer">Mint receipt ↗</a>}<a href={asset.metadata} target="_blank" rel="noreferrer">Metadata ↗</a></div></div></article>)}</div> : <div className="wallet-assets-empty"><b>No items on this network yet.</b><span>{walletAssetView === "robinhood" ? "Vibevibe tokens will be indexed here after the campaign connector is added." : "Launch or receive a testnet asset and it will appear here."}</span></div>}
+                </div>
               </section>
             </div>
           )}

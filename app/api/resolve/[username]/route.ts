@@ -1,10 +1,10 @@
 import { and, asc, eq } from "drizzle-orm";
-import { getDb } from "../../../../db";
-import { users, wallets } from "../../../../db/schema";
+import { cohortMembers, users, wallets } from "../../../../db/schema";
+import { faucetError, requireCampusUser } from "../../../../lib/faucet-auth";
 import { isValidUsername, normalizeUsername } from "../../../../lib/wallet-provider";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ username: string }> },
 ) {
   const { username: rawUsername } = await params;
@@ -15,7 +15,11 @@ export async function GET(
   }
 
   try {
-    const rows = await getDb()
+    const { db, student } = await requireCampusUser(request);
+    const [ownMembership] = await db.select().from(cohortMembers).where(eq(cohortMembers.userId, student.id)).limit(1);
+    if (!ownMembership) return Response.json({ error: "Join your Campus cohort before sending tokens" }, { status: 403 });
+
+    const rows = await db
       .select({
         username: users.username,
         displayName: users.displayName,
@@ -25,6 +29,7 @@ export async function GET(
         provider: wallets.provider,
       })
       .from(users)
+      .innerJoin(cohortMembers, and(eq(cohortMembers.userId, users.id), eq(cohortMembers.cohortId, ownMembership.cohortId)))
       .innerJoin(wallets, eq(wallets.userId, users.id))
       .where(and(eq(users.username, username), eq(users.status, "active"), eq(wallets.isPrimary, true)))
       .orderBy(asc(wallets.chain));
@@ -38,9 +43,5 @@ export async function GET(
       displayName: rows[0].displayName,
       wallets: rows.map(({ chain, address, walletType, provider }) => ({ chain, address, walletType, provider })),
     });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Username resolution is unavailable";
-    return Response.json({ error: message }, { status: 503 });
-  }
+  } catch (error) { return faucetError(error); }
 }
-

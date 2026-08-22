@@ -443,3 +443,22 @@ test("Robinhood faucet hands test ETH from Campus to Rabby for Vibevibe", async 
   assert.match(signer, /input\.chain === "robinhood" \? 46630 : 11155111/);
   assert.match(schema, /\["ethereum", "solana", "robinhood"\]/);
 });
+
+test("wallet workspace combines faucet, transfers and network holdings", async () => {
+  const [client, suggestions, resolver] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/resolve/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/resolve/[username]/route.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /WALLET & TEST FUNDS/);
+  assert.match(client, /EVM ADDRESS · SEPOLIA \+ ROBINHOOD/);
+  assert.match(client, /SEND TOKENS/);
+  assert.match(client, /Campus username/);
+  assert.match(client, /Wallet address/);
+  assert.match(client, /\["overall", "ethereum", "solana", "robinhood"\]/);
+  assert.match(client, /robinhoodPublicClient\.getBalance/);
+  assert.match(suggestions, /like\(users\.username, `\$\{query\}%`\)/);
+  assert.match(suggestions, /eq\(cohortMembers\.cohortId, membership\.cohortId\)/);
+  assert.match(resolver, /Join your Campus cohort before sending tokens/);
+  assert.match(resolver, /requireCampusUser\(request\)/);
+});

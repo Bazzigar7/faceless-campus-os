@@ -2,12 +2,12 @@ import { and, asc, count, eq, inArray } from "drizzle-orm";
 import { faucetClaims, faucetConfigs, wallets } from "../../../db/schema";
 import { faucetError, requireCampusUser } from "../../../lib/faucet-auth";
 import { isPrivyServerWalletReady, sendFaucetTransfer } from "../../../lib/privy-server-wallet";
-import type { CampusChain } from "../../../lib/wallet-provider";
+import type { CampusFaucetNetwork } from "../../../lib/wallet-provider";
 
-const defaults: Record<CampusChain, string> = { ethereum: "0.002", solana: "0.05" };
+const defaults: Record<CampusFaucetNetwork, string> = { ethereum: "0.002", solana: "0.05", robinhood: "0.001" };
 
 async function ensureConfigs(db: Awaited<ReturnType<typeof requireCampusUser>>["db"]) {
-  for (const chain of ["ethereum", "solana"] as const) {
+  for (const chain of ["ethereum", "solana", "robinhood"] as const) {
     await db.insert(faucetConfigs).values({ chain, amount: defaults[chain], maxClaims: 1 })
       .onConflictDoNothing({ target: faucetConfigs.chain });
   }
@@ -59,9 +59,9 @@ export async function POST(request: Request) {
   try {
     const { db, student } = await requireCampusUser(request);
     await ensureConfigs(db);
-    const body = await request.json() as { chain?: CampusChain };
+    const body = await request.json() as { chain?: CampusFaucetNetwork };
     const chain = body.chain;
-    if (chain !== "ethereum" && chain !== "solana") return Response.json({ error: "Choose Ethereum or Solana" }, { status: 400 });
+    if (chain !== "ethereum" && chain !== "solana" && chain !== "robinhood") return Response.json({ error: "Choose a Campus Faucet network" }, { status: 400 });
 
     const [config] = await db.select().from(faucetConfigs).where(eq(faucetConfigs.chain, chain)).limit(1);
     if (!config?.enabled) return Response.json({ error: "This Campus Faucet is not open yet" }, { status: 409 });
@@ -70,7 +70,7 @@ export async function POST(request: Request) {
     }
     const [destination] = await db.select().from(wallets).where(and(
       eq(wallets.userId, student.id),
-      eq(wallets.chain, chain),
+      eq(wallets.chain, chain === "robinhood" ? "ethereum" : chain),
       eq(wallets.isPrimary, true),
     )).limit(1);
     if (!destination) return Response.json({ error: `Your ${chain} classroom wallet is missing` }, { status: 409 });
@@ -81,7 +81,8 @@ export async function POST(request: Request) {
       inArray(faucetClaims.status, ["queued", "processing", "sent"]),
     ));
     if ((used?.value ?? 0) >= config.maxClaims) {
-      return Response.json({ error: `You have used all ${config.maxClaims} ${chain === "ethereum" ? "Sepolia" : "Solana Devnet"} claim${config.maxClaims === 1 ? "" : "s"}` }, { status: 409 });
+      const networkName = chain === "ethereum" ? "Sepolia" : chain === "solana" ? "Solana Devnet" : "Robinhood Testnet";
+      return Response.json({ error: `You have used all ${config.maxClaims} ${networkName} claim${config.maxClaims === 1 ? "" : "s"}` }, { status: 409 });
     }
 
     const claimNumber = (used?.value ?? 0) + 1;

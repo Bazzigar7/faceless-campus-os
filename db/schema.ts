@@ -23,7 +23,7 @@ export const wallets = sqliteTable("wallets", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   provider: text("provider", { enum: ["privy", "dynamic", "external"] }).notNull(),
-  chain: text("chain", { enum: ["ethereum", "solana"] }).notNull(),
+  chain: text("chain", { enum: ["ethereum", "solana", "robinhood"] }).notNull(),
   walletType: text("wallet_type", { enum: ["embedded", "external"] }).notNull(),
   address: text("address").notNull(),
   isPrimary: integer("is_primary", { mode: "boolean" }).notNull().default(false),
@@ -165,7 +165,7 @@ export const faucetClaims = sqliteTable("faucet_claims", {
 ]);
 
 export const faucetConfigs = sqliteTable("faucet_configs", {
-  chain: text("chain", { enum: ["ethereum", "solana"] }).primaryKey(),
+  chain: text("chain", { enum: ["ethereum", "solana", "robinhood"] }).primaryKey(),
   amount: text("amount").notNull(),
   maxClaims: integer("max_claims").notNull().default(1),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),

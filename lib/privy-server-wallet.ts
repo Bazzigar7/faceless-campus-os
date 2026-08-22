@@ -12,7 +12,7 @@ import {
 } from "@solana/kit";
 import { getTransferSolInstruction } from "@solana-program/system";
 import { TOKEN_PROGRAM_ADDRESS, findAssociatedTokenPda, getCreateAssociatedTokenIdempotentInstruction, getTransferCheckedInstruction } from "@solana-program/token";
-import type { CampusChain } from "./wallet-provider";
+import type { CampusChain, CampusFaucetNetwork } from "./wallet-provider";
 
 type PrivyWallet = { id: string; address: string; chain_type: CampusChain };
 type PrivyRpcResponse = { data?: { hash?: string }; error?: { message?: string } };
@@ -62,21 +62,21 @@ function decimalToBaseUnits(value: string, decimals: number) {
   return BigInt(whole) * (BigInt(10) ** BigInt(decimals)) + BigInt((fraction + "0".repeat(decimals)).slice(0, decimals));
 }
 
-async function sendEthereum(walletId: string, destination: string, amount: string, claimId: string) {
+async function sendEthereum(walletId: string, destination: string, amount: string, claimId: string, chainId = 11155111) {
   const value = decimalToBaseUnits(amount, 18);
   const response = await fetch(`https://api.privy.io/v1/wallets/${encodeURIComponent(walletId)}/rpc`, {
     method: "POST",
     headers: headers(claimId),
     body: JSON.stringify({
       method: "eth_sendTransaction",
-      caip2: "eip155:11155111",
+      caip2: `eip155:${chainId}`,
       chain_type: "ethereum",
       reference_id: claimId,
       params: { transaction: { to: destination, value: `0x${value.toString(16)}` } },
     }),
   });
   const result = await readPrivyResponse<PrivyRpcResponse>(response);
-  if (!result.data?.hash) throw new Error("Sepolia transaction did not return a hash");
+  if (!result.data?.hash) throw new Error(`${chainId === 46630 ? "Robinhood Testnet" : "Sepolia"} transaction did not return a hash`);
   return result.data.hash;
 }
 
@@ -116,15 +116,15 @@ async function sendSolana(walletId: string, distributorAddress: string, destinat
 }
 
 export async function sendFaucetTransfer(input: {
-  chain: CampusChain;
+  chain: CampusFaucetNetwork;
   walletId: string;
   distributorAddress: string;
   destination: string;
   amount: string;
   claimId: string;
 }) {
-  if (input.chain === "ethereum") {
-    return sendEthereum(input.walletId, input.destination, input.amount, input.claimId);
+  if (input.chain === "ethereum" || input.chain === "robinhood") {
+    return sendEthereum(input.walletId, input.destination, input.amount, input.claimId, input.chain === "robinhood" ? 46630 : 11155111);
   }
   return sendSolana(input.walletId, input.distributorAddress, input.destination, input.amount, input.claimId);
 }

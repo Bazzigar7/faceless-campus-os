@@ -423,3 +423,23 @@ test("Vibevibe partner lab runs a livestreamed bonding and graduation race", asy
   assert.match(schema, /partner_lab_teams/);
   assert.match(schema, /idx_partner_lab_proofs_team_user_type/);
 });
+
+test("Robinhood faucet hands test ETH from Campus to Rabby for Vibevibe", async () => {
+  const [client, provider, faucet, admin, signer, schema] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/PrivyClientProvider.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/faucet/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/faucet/admin/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/privy-server-wallet.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /CAMPUS → RABBY → VIBEVIBE/);
+  assert.match(client, /switchChain\(46630\)/);
+  assert.match(client, /Never use real ETH/);
+  assert.match(provider, /supportedChains: \[sepolia, robinhoodTestnet\]/);
+  assert.match(faucet, /"ethereum", "solana", "robinhood"/);
+  assert.match(faucet, /chain === "robinhood" \? "ethereum" : chain/);
+  assert.match(admin, /createDistributorWallet\(chain === "robinhood" \? "ethereum" : chain\)/);
+  assert.match(signer, /input\.chain === "robinhood" \? 46630 : 11155111/);
+  assert.match(schema, /\["ethereum", "solana", "robinhood"\]/);
+});

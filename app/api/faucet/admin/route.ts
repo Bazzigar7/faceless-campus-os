@@ -2,14 +2,14 @@ import { eq } from "drizzle-orm";
 import { faucetConfigs } from "../../../../db/schema";
 import { faucetError, requireOwner } from "../../../../lib/faucet-auth";
 import { createDistributorWallet, isPrivyServerWalletReady } from "../../../../lib/privy-server-wallet";
-import type { CampusChain } from "../../../../lib/wallet-provider";
+import type { CampusFaucetNetwork } from "../../../../lib/wallet-provider";
 
 export async function POST(request: Request) {
   try {
     const { db, student } = await requireOwner(request);
     const body = await request.json() as {
       action?: "prepare" | "update";
-      chain?: CampusChain;
+      chain?: CampusFaucetNetwork;
       amount?: string;
       maxClaims?: number;
       enabled?: boolean;
@@ -19,17 +19,17 @@ export async function POST(request: Request) {
       if (!isPrivyServerWalletReady()) {
         return Response.json({ error: "Add the Privy app secret to activate secure distributor wallets" }, { status: 503 });
       }
-      const created: Array<{ chain: CampusChain; address: string }> = [];
-      for (const chain of ["ethereum", "solana"] as const) {
+      const created: Array<{ chain: CampusFaucetNetwork; address: string }> = [];
+      for (const chain of ["ethereum", "solana", "robinhood"] as const) {
         const [existing] = await db.select().from(faucetConfigs).where(eq(faucetConfigs.chain, chain)).limit(1);
         if (existing?.distributorWalletId && existing.distributorAddress) {
           created.push({ chain, address: existing.distributorAddress });
           continue;
         }
-        const wallet = await createDistributorWallet(chain);
+        const wallet = await createDistributorWallet(chain === "robinhood" ? "ethereum" : chain);
         await db.insert(faucetConfigs).values({
           chain,
-          amount: chain === "ethereum" ? "0.002" : "0.05",
+          amount: chain === "solana" ? "0.05" : chain === "robinhood" ? "0.001" : "0.002",
           maxClaims: 1,
           distributorWalletId: wallet.id,
           distributorAddress: wallet.address,
@@ -45,7 +45,7 @@ export async function POST(request: Request) {
 
     if (body.action === "update") {
       const chain = body.chain;
-      if (chain !== "ethereum" && chain !== "solana") return Response.json({ error: "Choose a faucet network" }, { status: 400 });
+      if (chain !== "ethereum" && chain !== "solana" && chain !== "robinhood") return Response.json({ error: "Choose a faucet network" }, { status: 400 });
       const amount = (body.amount || "").trim();
       if (!/^\d+(\.\d{1,9})?$/.test(amount) || Number(amount) <= 0) return Response.json({ error: "Enter a valid claim amount" }, { status: 400 });
       const maxClaims = Number(body.maxClaims);

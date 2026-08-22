@@ -1,5 +1,6 @@
 export type WalletProviderName = "privy" | "dynamic";
 export type CampusChain = "ethereum" | "solana";
+export type CampusFaucetNetwork = CampusChain | "robinhood";
 export type CampusWalletKind = "embedded" | "external";
 
 export type VerifiedWalletIdentity = {

@@ -446,6 +446,53 @@ export const campaignSubmissions = sqliteTable("campaign_submissions", {
   index("idx_submissions_user_time").on(table.userId, table.submittedAt),
 ]);
 
+export const partnerLabTeams = sqliteTable("partner_lab_teams", {
+  id: text("id").primaryKey(),
+  campaignKey: text("campaign_key").notNull(),
+  name: text("name").notNull(),
+  characterName: text("character_name").notNull().default("Character pending"),
+  tokenName: text("token_name").notNull().default(""),
+  tokenSymbol: text("token_symbol").notNull().default(""),
+  launcherUserId: text("launcher_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  tokenAddress: text("token_address"),
+  launchTxHash: text("launch_tx_hash"),
+  status: text("status", { enum: ["forming", "ready", "launched", "testing", "submitted", "verified"] }).notNull().default("forming"),
+  reviewNotes: text("review_notes"),
+  verifiedBy: text("verified_by").references(() => users.id),
+  verifiedAt: text("verified_at"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_partner_lab_teams_campaign_status").on(table.campaignKey, table.status),
+  index("idx_partner_lab_teams_launcher").on(table.launcherUserId),
+]);
+
+export const partnerLabMembers = sqliteTable("partner_lab_members", {
+  id: text("id").primaryKey(),
+  teamId: text("team_id").notNull().references(() => partnerLabTeams.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  role: text("role", { enum: ["launcher", "market_tester"] }).notNull(),
+  status: text("status", { enum: ["invited", "accepted"] }).notNull().default("invited"),
+  joinedAt: text("joined_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_partner_lab_members_team_user").on(table.teamId, table.userId),
+  index("idx_partner_lab_members_user").on(table.userId),
+]);
+
+export const partnerLabProofs = sqliteTable("partner_lab_proofs", {
+  id: text("id").primaryKey(),
+  teamId: text("team_id").notNull().references(() => partnerLabTeams.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  proofType: text("proof_type", { enum: ["launch", "buy", "sell", "feedback"] }).notNull(),
+  transactionHash: text("transaction_hash"),
+  feedback: text("feedback"),
+  status: text("status", { enum: ["submitted", "verified", "rejected"] }).notNull().default("submitted"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_partner_lab_proofs_team_user_type").on(table.teamId, table.userId, table.proofType),
+  index("idx_partner_lab_proofs_team_status").on(table.teamId, table.status),
+]);
+
 export const creatorProjects = sqliteTable("creator_projects", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

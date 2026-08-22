@@ -397,3 +397,24 @@ test("First-Day Runway guides students through verified onboarding and shows coh
   assert.match(route, /row\.status === "sent"/);
   assert.match(route, /student\.role === "owner"/);
 });
+
+test("Vibevibe partner lab forms five-person teams and records distinct testnet proof", async () => {
+  const [client, route, onboarding, schema] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/partner-lab/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/onboarding/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /FIRST-DAY PARTNER LAB/);
+  assert.match(client, /Five students/);
+  assert.match(client, /Final eligibility and distribution are confirmed by Vibevibe/);
+  assert.match(client, /testnet\.vibevibe\.fun/);
+  assert.match(route, /inviteNames\.length !== 4/);
+  assert.match(route, /accepted\.length \+ \(membership\.status === "invited" \? 1 : 0\) >= 5/);
+  assert.match(route, /buyerProofs >= 4/);
+  assert.match(route, /feedbackProofs >= 5/);
+  assert.match(route, /Only the Campus OS owner can verify partner-lab completion/);
+  assert.match(onboarding, /Join the Vibevibe partner lab/);
+  assert.match(schema, /partner_lab_teams/);
+  assert.match(schema, /idx_partner_lab_proofs_team_user_type/);
+});

@@ -211,6 +211,13 @@
       "when": 1787166395671,
       "tag": "0029_easy_silver_samurai",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1787419057243,
+      "tag": "0030_lumpy_energizer",
+      "breakpoints": true
     }
   ]
 }

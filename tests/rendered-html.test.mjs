@@ -164,8 +164,10 @@ test("educators can assign lessons and cohorts see one clear learning plan", asy
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
   ]);
   assert.match(client, /ASSIGN THE NEXT LESSON/);
-  assert.match(client, /YOUR COHORT PLAN/);
-  assert.match(client, /What your educator wants you to learn next/);
+  assert.match(client, /Learn at your pace/);
+  assert.match(client, /learn-course-switcher/);
+  assert.match(client, /FROM YOUR EDUCATOR/);
+  assert.match(client, /Your class lessons/);
   assert.match(route, /action === "assign_lesson"/);
   assert.match(route, /action === "archive_assignment"/);
   assert.match(route, /completedCount/);

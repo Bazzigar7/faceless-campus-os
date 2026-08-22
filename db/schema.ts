@@ -517,6 +517,33 @@ export const partnerLabProofs = sqliteTable("partner_lab_proofs", {
   index("idx_partner_lab_proofs_team_status").on(table.teamId, table.status),
 ]);
 
+export const partnerDailyMissions = sqliteTable("partner_daily_missions", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  dayKey: text("day_key").notNull(),
+  tradingWallet: text("trading_wallet").notNull(),
+  xpAmount: integer("xp_amount").notNull().default(50),
+  status: text("status", { enum: ["verified"] }).notNull().default("verified"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_partner_daily_user_day").on(table.userId, table.dayKey),
+  uniqueIndex("idx_partner_daily_wallet_day").on(table.tradingWallet, table.dayKey),
+  index("idx_partner_daily_user_time").on(table.userId, table.createdAt),
+]);
+
+export const partnerDailyTrades = sqliteTable("partner_daily_trades", {
+  id: text("id").primaryKey(),
+  missionId: text("mission_id").notNull().references(() => partnerDailyMissions.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  transactionHash: text("transaction_hash").notNull(),
+  tokenAddress: text("token_address").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_partner_daily_trade_hash").on(table.transactionHash),
+  index("idx_partner_daily_trades_mission").on(table.missionId),
+  index("idx_partner_daily_trades_user_time").on(table.userId, table.createdAt),
+]);
+
 export const creatorProjects = sqliteTable("creator_projects", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

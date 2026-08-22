@@ -229,9 +229,9 @@ test("campaign engine persists missions, submissions and owner payment approval"
   assert.match(client, /APPROVED PAYMENT QUEUE/);
   assert.match(client, /PAYMENT LEDGER/);
   assert.match(client, /YOUR CREATOR EARNINGS/);
-  assert.match(client, /Every campaign earns/);
-  assert.match(client, /Partner airdrop/);
-  assert.match(client, /Clipping and UGC campaigns can also earn money/);
+  assert.match(client, /Find your next mission/);
+  assert.match(client, /Partner reward/);
+  assert.match(client, /get paid for approved UGC and clips/);
   assert.match(client, /View campaign/);
   assert.match(route, /approved_for_payment/);
   assert.match(route, /record_payment/);
@@ -475,9 +475,17 @@ test("Vibevibe partner lab runs a livestreamed bonding and graduation race", asy
   assert.match(route, /team\.curveProgressBps >= 10000/);
   assert.match(route, /The Campus OS owner submits the consolidated founder feedback/);
   assert.match(route, /Only the Campus OS owner can verify partner-lab completion/);
+  assert.match(client, /DAILY LAUNCHPAD MISSION/);
+  assert.match(client, /Trade classmates’ tokens\. Earn 50 XP/);
+  assert.match(route, /submit_daily_trades/);
+  assert.match(route, /Buy at least two different classmates’ tokens/);
+  assert.match(route, /eth_getTransactionReceipt/);
+  assert.match(route, /Today’s 50 XP trading mission is already complete/);
   assert.match(onboarding, /Join the Vibevibe partner lab/);
   assert.match(schema, /partner_lab_teams/);
   assert.match(schema, /idx_partner_lab_proofs_team_user_type/);
+  assert.match(schema, /partner_daily_missions/);
+  assert.match(schema, /idx_partner_daily_trade_hash/);
 });
 
 test("Robinhood faucet hands test ETH from Campus to Rabby for Vibevibe", async () => {

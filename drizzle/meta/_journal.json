@@ -232,6 +232,13 @@
       "when": 1787435662507,
       "tag": "0032_wooden_excalibur",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1787439431749,
+      "tag": "0033_minor_havok",
+      "breakpoints": true
     }
   ]
 }

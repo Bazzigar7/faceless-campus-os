@@ -282,12 +282,16 @@ test("Campus League scores only verified learning and testnet activity", async (
   assert.match(client, /No self-reported/);
 });
 
-test("Build, Playground and Launchpad live inside one Build workspace", async () => {
+test("Build presents one simple Mask-guided launcher", async () => {
   const client = await readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8");
   assert.match(client, /label: "Build"/);
-  assert.match(client, /build-workspace-nav/);
-  assert.match(client, /XP missions and games/);
-  assert.match(client, /Tokens and NFTs/);
+  assert.match(client, /BUILD ONCHAIN/);
+  assert.match(client, /What do you want/);
+  assert.match(client, /Deploy with Mask/);
+  assert.match(client, />NFT collection</);
+  assert.match(client, />RWA</);
+  assert.doesNotMatch(client, /build-workspace-nav/);
+  assert.doesNotMatch(client, /XP missions and games/);
   assert.doesNotMatch(client, /label: "Playground"/);
   assert.doesNotMatch(client, /label: "Launchpad"/);
 });
@@ -383,7 +387,7 @@ test("Campus Showcase exposes only verified cohort builds with one-student appla
   ]);
   assert.match(client, /VERIFIED CAMPUS SHOWCASE/);
   assert.match(client, /Project Studio/);
-  assert.match(client, /NFT Builder/);
+  assert.match(client, /Student showcase/);
   assert.match(client, /No popularity XP/);
   assert.match(route, /eq\(builderProjects\.status, "verified"\)/);
   assert.match(route, /eq\(cohortMembers\.cohortId, membership\.cohortId\)/);

@@ -175,6 +175,16 @@ test("educators can assign lessons and cohorts see one clear learning plan", asy
   assert.match(schema, /idx_cohort_assignments_cohort_lesson/);
 });
 
+test("Learn and Mask keep the student focused on one clear action", async () => {
+  const client = await readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8");
+  assert.match(client, /Next lesson →/);
+  assert.match(client, /mask-chat-shell/);
+  assert.match(client, /Ask anything\. Learn, build, create/);
+  assert.doesNotMatch(client, /HYBRID ANSWER MODE/);
+  assert.doesNotMatch(client, /className="mask-tools"/);
+  assert.doesNotMatch(client, /className="prompt-chips"/);
+});
+
 test("live attendance uses expiring cohort codes and a verified roster", async () => {
   const [client, route, schema] = await Promise.all([
     readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),

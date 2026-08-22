@@ -594,6 +594,8 @@ export default function OnchainLab() {
   const homeEarnings = `₹${totalEarnedInr.toLocaleString("en-IN")}`;
   const selectedProgress = learningState?.records.find((record) => record.course === selectedLesson.course && record.lessonId === selectedLesson.id);
   const selectedComplete = selectedProgress?.status === "completed";
+  const selectedLessonIndex = lessonTracks[selectedLesson.course].findIndex((lesson) => lesson.id === selectedLesson.id);
+  const nextLesson = lessonTracks[selectedLesson.course][selectedLessonIndex + 1] ?? null;
 
   const title = useMemo(() => navItems.find((item) => item.id === active)?.label ?? "Home", [active]);
   const visibleMarketCollections = marketCollections.filter((collection) => {
@@ -2597,7 +2599,7 @@ export default function OnchainLab() {
                   <h3>{selectedLesson.title}</h3>
                   <p>{selectedLesson.copy}</p>
                   <div className={selectedComplete ? "lesson-complete-panel done" : "lesson-complete-panel"}><span>{selectedComplete ? "✓" : "○"}</span><div><b>{selectedComplete ? "Lesson complete" : "Finish this lesson"}</b><small>{selectedComplete ? "Your guided activity is unlocked." : "The video also completes automatically when it ends."}</small></div>{!selectedComplete && <button disabled={learningBusy} onClick={() => saveLessonProgress(selectedLesson, "completed", selectedProgress?.positionSeconds ?? 0, selectedProgress?.durationSeconds ?? 0)}>{learningBusy ? "Saving…" : "Mark complete"}</button>}</div>
-                  <div className="lesson-actions"><button className="primary" disabled={!selectedComplete} onClick={() => notify(`${selectedLesson.action} opened in guided mode`)}>{selectedComplete ? `${selectedLesson.action} →` : "Complete to unlock"}</button><button className="secondary" onClick={() => setActive("mask")}>Ask Mask</button></div>
+                  <div className="lesson-actions"><button className="primary" disabled={!nextLesson} onClick={() => nextLesson && openLesson(nextLesson)}>{nextLesson ? "Next lesson →" : "Course complete ✓"}</button><button className="secondary" onClick={() => setActive("mask")}>Ask Mask</button></div>
                 </div>
               </section>
               <div className="course-head"><div><span className="eyebrow">ALL LESSONS</span><h3>{selectedCourse === "blockchain" ? "Blockchain basics" : selectedCourse === "bitcoin" ? "Bitcoin foundations" : "Ethereum & applications"}</h3></div><span>{learningState?.courseProgress.find((item) => item.course === selectedCourse)?.completed ?? 0} of {lessonTracks[selectedCourse].length} complete</span></div>
@@ -2614,23 +2616,17 @@ export default function OnchainLab() {
           )}
 
           {active === "mask" && (
-            <div className="mask-page">
-              <section className="mask-stage">
-                <div className="mask-stage-copy"><span className="eyebrow">YOUR AI CO-HOST</span><h2>Ask Mask.<br /><em>Anything.</em></h2><p>A general AI co-host that also understands every approved Faceless lesson. Curriculum when relevant—direct answers when it isn’t.</p></div>
-                <div className="mask-stage-orb"><div className="signal-ring ring-one" /><div className="signal-ring ring-two" /><MaskOrb /></div>
-              </section>
-              <section className="mask-chat card">
-                <div className="mask-context"><span><b>HYBRID ANSWER MODE</b><small>GENERAL KNOWLEDGE · FACELESS CURRICULUM · CURRENT WEB WHEN NEEDED</small></span><button onClick={() => setActive("learn")}>Optional context: {selectedLesson.title} ↗</button></div>
+            <div className="mask-chat-page">
+              <section className="mask-chat-shell">
+                <header><MaskOrb compact /><div><h2>Mask</h2><p>Ask anything. Learn, build, create—or launch something together.</p></div><span><i /> READY</span></header>
                 <div className="mask-conversation" aria-live="polite">{maskMessages.map((message, index) => <div key={`${message.role}-${index}`} className={`chat-answer ${message.role}`}>
                   {message.role === "assistant" ? <MaskOrb compact /> : <span className="student-chat-mark">{initials}</span>}
                   <div><small>{message.role === "assistant" ? "MASK" : "YOU"}</small>{message.image ? <figure className="mask-message-art"><img src={message.image} alt="Artwork uploaded by the student" /><figcaption>{message.imageName}</figcaption></figure> : null}<p>{message.text}</p>{message.citations?.length ? <div className="mask-citations">{message.citations.map((citation) => <a key={citation.url} href={citation.url} target="_blank" rel="noreferrer">{citation.title} ↗</a>)}</div> : null}{message.launchDraft ? <button className="mask-launch-card" onClick={() => openLaunchDraft(message.launchDraft!)}><span><b>{message.launchDraft.assetType === "nft_collection" ? "NFT COLLECTION" : "TOKEN"} · {message.launchDraft.chain === "ethereum" ? "SEPOLIA" : "SOLANA DEVNET"}</b><strong>{message.launchDraft.name} ({message.launchDraft.symbol})</strong><small>{message.launchDraft.supply.toLocaleString()} supply · Review before anything is signed</small></span><em>Open in Launchpad →</em></button> : null}</div>
                 </div>)}{maskBusy && <div className="chat-answer assistant thinking"><MaskOrb compact /><div><small>MASK</small><p>Thinking…</p></div></div>}</div>
-                <div className="prompt-chips">{["Help me launch an NFT collection", "Help me launch a token", "Explain gas simply"].map((prompt) => <button key={prompt} onClick={() => setMaskQuestion(prompt)}>{prompt}</button>)}</div>
                 {maskArtwork && <div className="mask-art-attachment"><img src={maskArtwork.dataUrl} alt="Artwork ready to attach" /><div><b>{maskArtwork.name}</b><small>{(maskArtwork.size / 1024 / 1024).toFixed(2)} MB · Ready for Mask</small><label><input type="checkbox" checked={maskArtworkRights} onChange={(event) => setMaskArtworkRights(event.target.checked)} /> I created this artwork or have permission to use it.</label></div><button type="button" onClick={() => { setMaskArtwork(null); setMaskArtworkRights(false); }} aria-label="Remove attached artwork">×</button></div>}
-                <form className="mask-form" onSubmit={askMask}><label className="mask-upload-button" title="Attach artwork"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={attachMaskArtwork} /><span>＋</span><small>Art</small></label><input value={maskQuestion} onChange={(event) => setMaskQuestion(event.target.value)} placeholder={maskArtwork ? "Add a note for Mask (optional)…" : "Ask Mask anything…"} aria-label="Question for Mask" maxLength={1500} /><button type="submit" disabled={maskBusy}>{maskBusy ? "Thinking…" : maskArtwork ? "Send artwork →" : "Ask Mask →"}</button></form>
-                <small className="prototype-note">Mask can explain and guide, but never signs wallet transactions or guarantees financial outcomes.</small>
+                <form className="mask-form" onSubmit={askMask}><label className="mask-upload-button" title="Attach artwork"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={attachMaskArtwork} /><span>＋</span><small>Art</small></label><input value={maskQuestion} onChange={(event) => setMaskQuestion(event.target.value)} placeholder={maskArtwork ? "Add a note for Mask (optional)…" : "Ask Mask anything…"} aria-label="Question for Mask" maxLength={1500} /><button type="submit" disabled={maskBusy}>{maskBusy ? "Thinking…" : maskArtwork ? "Send artwork →" : "Send →"}</button></form>
+                <small className="prototype-note">Mask guides the process. Your wallet always gives the final approval.</small>
               </section>
-              <section className="mask-tools"><article><span>01</span><b>Understand</b><p>Explain the concept using the lesson you are watching.</p></article><article><span>02</span><b>Create</b><p>Turn the concept into a safe testnet activity.</p></article><article><span>03</span><b>Campaign</b><p>Convert a partner brief into a checklist, hook and script.</p></article></section>
             </div>
           )}
 

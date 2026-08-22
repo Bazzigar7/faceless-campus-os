@@ -3,6 +3,10 @@ import { cohortMembers, partnerLabMembers, partnerLabProofs, partnerLabTeams, us
 import { faucetError, requireCampusUser } from "../../../lib/faucet-auth";
 
 const CAMPAIGN_KEY = "vibevibe-robinhood-testnet-01";
+const characterLibrary = new Map([
+  ["lightbulb", "The Idea"], ["soccer", "The Player"], ["ethereum", "The Builder"],
+  ["bitcoin", "The Believer"], ["oldmoney", "The Hustler"], ["virus", "The Rebel"],
+]);
 const campaign = {
   key: CAMPAIGN_KEY,
   title: "Vibevibe × Faceless Token Lab",
@@ -14,8 +18,12 @@ const campaign = {
   explorerUrl: "https://explorer.testnet.chain.robinhood.com",
   faucetUrl: "https://faucet.testnet.chain.robinhood.com",
   teamSize: 5,
-  reward: "Partner airdrop for eligible pressure-test participants",
-  mechanicsStatus: "Awaiting the partner's final bonding and eligibility rules",
+  fixedSupply: "1,000,000,000",
+  launchCostEth: "0.0005",
+  raiseTargetEth: "0.005",
+  tradingFeePercent: 1,
+  reward: "Partner reward for the livestreamed pressure-test cohort",
+  mechanicsStatus: "Complete the 0.005 test ETH bonding curve, then record the separate graduation transaction.",
 };
 
 async function labState(request: Request) {
@@ -41,8 +49,10 @@ async function labState(request: Request) {
     const accepted = teamMembers.filter((member) => member.status === "accepted");
     const launchProof = proofs.some((proof) => proof.teamId === team.id && proof.proofType === "launch");
     const buyerProofs = new Set(proofs.filter((proof) => proof.teamId === team.id && proof.proofType === "buy").map((proof) => proof.userId)).size;
-    const feedbackProofs = new Set(proofs.filter((proof) => proof.teamId === team.id && proof.proofType === "feedback").map((proof) => proof.userId)).size;
-    return { ...team, members: teamMembers, progress: { accepted: accepted.length, launchProof, buyerProofs, feedbackProofs, readyForReview: accepted.length === 5 && launchProof && buyerProofs >= 4 && feedbackProofs >= 5 } };
+    const sellProof = proofs.some((proof) => proof.teamId === team.id && proof.proofType === "sell");
+    const graduated = Boolean(team.graduationTxHash) || proofs.some((proof) => proof.teamId === team.id && proof.proofType === "graduation");
+    const feedbackSubmitted = Boolean(team.feedbackSubmittedAt);
+    return { ...team, members: teamMembers, progress: { accepted: accepted.length, launchProof, buyerProofs, sellProof, curveProgressBps: team.curveProgressBps, graduated, feedbackSubmitted, readyForReview: accepted.length === 5 && launchProof && buyerProofs >= 4 && sellProof && team.curveProgressBps >= 10000 && graduated && feedbackSubmitted } };
   });
   return { role: student.role, ownUserId: student.id, campaign, teams: shapedTeams, reviewQueue: student.role === "owner" ? shapedTeams.filter((team) => team.progress.readyForReview && team.status !== "verified") : [] };
 }
@@ -87,8 +97,11 @@ export async function POST(request: Request) {
       } else if (action === "save_setup") {
         if (team.launcherUserId !== student.id) return Response.json({ error: "Only the nominated launcher can edit the token setup" }, { status: 403 });
         const tokenName = String(body.tokenName || "").trim(); const symbol = String(body.tokenSymbol || "").trim().toUpperCase();
-        if (!tokenName || !symbol) return Response.json({ error: "Add a token name and symbol" }, { status: 400 });
-        await db.update(partnerLabTeams).set({ characterName: String(body.characterName || "Character pending").slice(0, 80), tokenName: tokenName.slice(0, 80), tokenSymbol: symbol.slice(0, 12), updatedAt: new Date().toISOString() }).where(eq(partnerLabTeams.id, teamId));
+        const characterKey = String(body.characterKey || ""); const characterName = characterLibrary.get(characterKey); const tokenPitch = String(body.tokenPitch || "").trim();
+        const initialBuyEth = String(body.initialBuyEth || "0").trim();
+        if (!characterName || !tokenName || !symbol || !tokenPitch) return Response.json({ error: "Choose an official character and add the token name, symbol and pitch" }, { status: 400 });
+        if (!/^(0|0\.0000[123])$/.test(initialBuyEth)) return Response.json({ error: "Choose no initial buy or one of the safe Vibevibe presets" }, { status: 400 });
+        await db.update(partnerLabTeams).set({ characterKey, characterName, tokenName: tokenName.slice(0, 64), tokenSymbol: symbol.slice(0, 16), tokenPitch: tokenPitch.slice(0, 280), initialBuyEth, updatedAt: new Date().toISOString() }).where(eq(partnerLabTeams.id, teamId));
       } else if (action === "submit_launch") {
         if (team.launcherUserId !== student.id) return Response.json({ error: "Only the nominated launcher can submit the launch receipt" }, { status: 403 });
         const tokenAddress = String(body.tokenAddress || "").trim(); const tx = String(body.transactionHash || "").trim();
@@ -97,20 +110,36 @@ export async function POST(request: Request) {
         await db.insert(partnerLabProofs).values({ id: crypto.randomUUID(), teamId, userId: student.id, proofType: "launch", transactionHash: tx }).onConflictDoUpdate({ target: [partnerLabProofs.teamId, partnerLabProofs.userId, partnerLabProofs.proofType], set: { transactionHash: tx, status: "submitted", createdAt: new Date().toISOString() } });
       } else if (action === "submit_proof") {
         if (!membership || membership.status !== "accepted") return Response.json({ error: "Accept your team invitation before submitting proof" }, { status: 403 });
-        const proofType = String(body.proofType || "") as "buy" | "sell" | "feedback";
-        if (!["buy", "sell", "feedback"].includes(proofType)) return Response.json({ error: "Choose a valid pressure-test proof" }, { status: 400 });
+        const proofType = String(body.proofType || "") as "buy" | "sell";
+        if (!["buy", "sell"].includes(proofType)) return Response.json({ error: "Choose a valid pressure-test proof" }, { status: 400 });
         if (proofType === "buy" && membership.role !== "market_tester") return Response.json({ error: "The four nominated market testers provide the qualifying buy proofs" }, { status: 403 });
-        const tx = String(body.transactionHash || "").trim(); const feedback = String(body.feedback || "").trim();
-        if (proofType !== "feedback" && !/^0x[a-fA-F0-9]{64}$/.test(tx)) return Response.json({ error: "Paste the full Robinhood testnet transaction hash" }, { status: 400 });
-        if (proofType === "feedback" && feedback.length < 12) return Response.json({ error: "Describe what worked or where the launchpad felt confusing" }, { status: 400 });
-        await db.insert(partnerLabProofs).values({ id: crypto.randomUUID(), teamId, userId: student.id, proofType, transactionHash: tx || null, feedback: feedback.slice(0, 800) || null }).onConflictDoUpdate({ target: [partnerLabProofs.teamId, partnerLabProofs.userId, partnerLabProofs.proofType], set: { transactionHash: tx || null, feedback: feedback.slice(0, 800) || null, status: "submitted", createdAt: new Date().toISOString() } });
+        const tx = String(body.transactionHash || "").trim();
+        if (!/^0x[a-fA-F0-9]{64}$/.test(tx)) return Response.json({ error: "Paste the full Robinhood testnet transaction hash" }, { status: 400 });
+        await db.insert(partnerLabProofs).values({ id: crypto.randomUUID(), teamId, userId: student.id, proofType, transactionHash: tx }).onConflictDoUpdate({ target: [partnerLabProofs.teamId, partnerLabProofs.userId, partnerLabProofs.proofType], set: { transactionHash: tx, status: "submitted", createdAt: new Date().toISOString() } });
         await db.update(partnerLabTeams).set({ status: "testing", updatedAt: new Date().toISOString() }).where(eq(partnerLabTeams.id, teamId));
+      } else if (action === "update_curve") {
+        if (student.role !== "owner") return Response.json({ error: "Only the Campus OS owner records the live bonding progress" }, { status: 403 });
+        const curveProgressBps = Math.round(Number(body.curveProgressPercent) * 100);
+        if (!Number.isFinite(curveProgressBps) || curveProgressBps < 0 || curveProgressBps > 10000) return Response.json({ error: "Enter bonding progress from 0 to 100%" }, { status: 400 });
+        await db.update(partnerLabTeams).set({ curveProgressBps, status: "testing", updatedAt: new Date().toISOString() }).where(eq(partnerLabTeams.id, teamId));
+      } else if (action === "submit_graduation") {
+        if (team.launcherUserId !== student.id && student.role !== "owner") return Response.json({ error: "Only the launcher or Campus OS owner can record graduation" }, { status: 403 });
+        const tx = String(body.transactionHash || "").trim();
+        if (!/^0x[a-fA-F0-9]{64}$/.test(tx)) return Response.json({ error: "Paste the full graduation transaction hash" }, { status: 400 });
+        await db.update(partnerLabTeams).set({ graduationTxHash: tx, curveProgressBps: 10000, status: "submitted", updatedAt: new Date().toISOString() }).where(eq(partnerLabTeams.id, teamId));
+        await db.insert(partnerLabProofs).values({ id: crypto.randomUUID(), teamId, userId: student.id, proofType: "graduation", transactionHash: tx }).onConflictDoUpdate({ target: [partnerLabProofs.teamId, partnerLabProofs.userId, partnerLabProofs.proofType], set: { transactionHash: tx, status: "submitted", createdAt: new Date().toISOString() } });
+      } else if (action === "submit_feedback") {
+        if (student.role !== "owner") return Response.json({ error: "The Campus OS owner submits the consolidated founder feedback" }, { status: 403 });
+        const feedbackReference = String(body.feedbackReference || "").trim();
+        if (feedbackReference.length < 8) return Response.json({ error: "Add the submitted form link, confirmation or report reference" }, { status: 400 });
+        const now = new Date().toISOString();
+        await db.update(partnerLabTeams).set({ feedbackReference: feedbackReference.slice(0, 500), feedbackSubmittedAt: now, updatedAt: now }).where(eq(partnerLabTeams.id, teamId));
+        await db.insert(partnerLabProofs).values({ id: crypto.randomUUID(), teamId, userId: student.id, proofType: "feedback", feedback: feedbackReference.slice(0, 500) }).onConflictDoUpdate({ target: [partnerLabProofs.teamId, partnerLabProofs.userId, partnerLabProofs.proofType], set: { feedback: feedbackReference.slice(0, 500), status: "submitted", createdAt: now } });
       } else if (action === "verify_team") {
         if (student.role !== "owner") return Response.json({ error: "Only the Campus OS owner can verify partner-lab completion" }, { status: 403 });
         const [teamMembers, teamProofs] = await Promise.all([db.select().from(partnerLabMembers).where(and(eq(partnerLabMembers.teamId, teamId), eq(partnerLabMembers.status, "accepted"))), db.select().from(partnerLabProofs).where(eq(partnerLabProofs.teamId, teamId))]);
         const qualifyingBuyers = new Set(teamProofs.filter((proof) => proof.proofType === "buy").map((proof) => proof.userId));
-        const feedbackAuthors = new Set(teamProofs.filter((proof) => proof.proofType === "feedback").map((proof) => proof.userId));
-        if (teamMembers.length !== 5 || !teamProofs.some((proof) => proof.proofType === "launch") || qualifyingBuyers.size < 4 || feedbackAuthors.size < 5) return Response.json({ error: "This team still needs five members, one launch, four tester buys and five feedback reports" }, { status: 409 });
+        if (teamMembers.length !== 5 || !teamProofs.some((proof) => proof.proofType === "launch") || qualifyingBuyers.size < 4 || !teamProofs.some((proof) => proof.proofType === "sell") || !team.graduationTxHash || team.curveProgressBps < 10000 || !team.feedbackSubmittedAt) return Response.json({ error: "This team still needs five members, launch, four buys, one sell, full bonding, graduation and educator feedback" }, { status: 409 });
         await db.update(partnerLabTeams).set({ status: "verified", reviewNotes: String(body.reviewNotes || "Pressure test complete").slice(0, 500), verifiedBy: student.id, verifiedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }).where(eq(partnerLabTeams.id, teamId));
         await db.update(partnerLabProofs).set({ status: "verified" }).where(eq(partnerLabProofs.teamId, teamId));
       } else return Response.json({ error: "Choose a valid partner-lab action" }, { status: 400 });

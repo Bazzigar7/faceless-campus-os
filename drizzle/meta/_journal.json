@@ -218,6 +218,13 @@
       "when": 1787419057243,
       "tag": "0030_lumpy_energizer",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1787424833902,
+      "tag": "0031_light_moon_knight",
+      "breakpoints": true
     }
   ]
 }

@@ -11,7 +11,7 @@ const stepCopy: Array<{ id: StepId; number: string; title: string; description: 
   { id: "funds", number: "04", title: "Claim test funds", description: "Get Sepolia ETH or Devnet SOL from the Campus faucet.", destination: "wallet" },
   { id: "transaction", number: "05", title: "Make your first onchain move", description: "Send a token, mint an NFT, launch an asset or make an RWA practice trade.", destination: "market" },
   { id: "badge", number: "06", title: "Unlock your first proof badge", description: "Your verified onchain action automatically becomes Campus proof.", destination: "games" },
-  { id: "partner_lab", number: "07", title: "Join the Vibevibe partner lab", description: "Form a five-person team, launch one Faceless token and pressure-test the market together.", destination: "campaigns" },
+  { id: "partner_lab", number: "07", title: "Join the Vibevibe partner lab", description: "Form a five-person team, launch one Faceless personality token and help bond it live through graduation.", destination: "campaigns" },
 ];
 
 export async function GET(request: Request) {

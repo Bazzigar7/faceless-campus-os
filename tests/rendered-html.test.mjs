@@ -398,21 +398,26 @@ test("First-Day Runway guides students through verified onboarding and shows coh
   assert.match(route, /student\.role === "owner"/);
 });
 
-test("Vibevibe partner lab forms five-person teams and records distinct testnet proof", async () => {
+test("Vibevibe partner lab runs a livestreamed bonding and graduation race", async () => {
   const [client, route, onboarding, schema] = await Promise.all([
     readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/partner-lab/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/onboarding/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(client, /FIRST-DAY PARTNER LAB/);
-  assert.match(client, /Five students/);
-  assert.match(client, /Final eligibility and distribution are confirmed by Vibevibe/);
+  assert.match(client, /FIRST-DAY LIVESTREAM/);
+  assert.match(client, /Five students become one live launch team/);
+  assert.match(client, /BONDING TARGET/);
+  assert.match(client, /0\.005 test ETH/);
+  assert.match(client, /Educator-only founder feedback/);
+  assert.match(client, /faceless-ip\/lightbulb\.png/);
   assert.match(client, /testnet\.vibevibe\.fun/);
   assert.match(route, /inviteNames\.length !== 4/);
   assert.match(route, /accepted\.length \+ \(membership\.status === "invited" \? 1 : 0\) >= 5/);
   assert.match(route, /buyerProofs >= 4/);
-  assert.match(route, /feedbackProofs >= 5/);
+  assert.match(route, /proof\.proofType === "sell"/);
+  assert.match(route, /team\.curveProgressBps >= 10000/);
+  assert.match(route, /The Campus OS owner submits the consolidated founder feedback/);
   assert.match(route, /Only the Campus OS owner can verify partner-lab completion/);
   assert.match(onboarding, /Join the Vibevibe partner lab/);
   assert.match(schema, /partner_lab_teams/);

@@ -232,7 +232,7 @@ test("campaign engine persists missions, submissions and owner payment approval"
   assert.match(client, /PARTNER REWARD/);
   assert.match(client, /Open campaign/);
   assert.doesNotMatch(client, /campaign-vibe-head/);
-  assert.match(client, /\/partners\/vibevibe-logo\.mp4/);
+  assert.match(client, /\/partners\/vibevibe-logo\.gif/);
   assert.match(client, /single-campaign-grid/);
   assert.match(client, /All campaigns/);
   assert.match(client, /Product testing/);

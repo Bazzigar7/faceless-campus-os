@@ -2808,7 +2808,6 @@ export default function OnchainLab() {
 
           {active === "campaigns" && (
             <div className="page-stack">
-              {selectedCampaignId === null && <section className="campaign-vibe-head"><div><span className="eyebrow">FACELESS CAMPAIGNS</span><h2>Find your next mission.</h2><p>Create for real partners. Build proof, earn XP, unlock airdrops—and get paid for approved UGC and clips.</p></div><aside><b>+100 XP</b><span>on every approved campaign</span></aside></section>}
               {selectedCampaignId === null && <section className="campaign-vibe-browser">
                 <div className="campaign-vibe-tools"><label>⌕<input value={campaignSearch} onChange={(event) => setCampaignSearch(event.target.value)} placeholder="Search campaigns or brands…" aria-label="Search campaigns" /></label><nav aria-label="Campaign categories"><button className={campaignFilter === "all" ? "active" : ""} onClick={() => setCampaignFilter("all")}>All campaigns</button><button className={campaignFilter === "ugc" ? "active" : ""} onClick={() => setCampaignFilter("ugc")}>UGC</button><button className={campaignFilter === "clipper" ? "active" : ""} onClick={() => setCampaignFilter("clipper")}>Clipping</button><button className={campaignFilter === "user_acquisition" ? "active" : ""} onClick={() => setCampaignFilter("user_acquisition")}>User growth</button></nav></div>
                 <div className="campaign-vibe-grid">

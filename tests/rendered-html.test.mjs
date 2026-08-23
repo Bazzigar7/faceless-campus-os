@@ -233,6 +233,7 @@ test("campaign engine persists missions, submissions and owner payment approval"
   assert.match(client, /Partner reward/);
   assert.match(client, /get paid for approved UGC and clips/);
   assert.match(client, /View campaign/);
+  assert.match(client, /\/partners\/vibevibe-logo\.mp4/);
   assert.match(route, /approved_for_payment/);
   assert.match(route, /record_payment/);
   assert.match(route, /destinationReference/);

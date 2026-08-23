@@ -218,11 +218,10 @@ test("partner drops can be restricted to verified session attendees", async () =
 });
 
 test("campaign engine persists missions, submissions and owner payment approval", async () => {
-  const [client, route, schema, styles] = await Promise.all([
+  const [client, route, schema] = await Promise.all([
     readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/campaigns/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
   assert.match(client, /CAMPAIGN CONTROL/);
   assert.match(client, /Submit work/);
@@ -234,10 +233,8 @@ test("campaign engine persists missions, submissions and owner payment approval"
   assert.match(client, /View campaign/);
   assert.doesNotMatch(client, /campaign-vibe-head/);
   assert.match(client, /\/partners\/vibevibe-logo\.mp4/);
-  assert.match(client, /Weekend Reels/);
-  assert.match(client, /Property Tour/);
-  assert.match(client, /COMING SOON/);
-  assert.match(styles, /sticksy-rks-reference\.png/);
+  assert.match(client, /single-campaign-grid/);
+  assert.doesNotMatch(client, /Sticksy|RKS Builders/);
   assert.match(route, /approved_for_payment/);
   assert.match(route, /record_payment/);
   assert.match(route, /destinationReference/);

@@ -229,11 +229,15 @@ test("campaign engine persists missions, submissions and owner payment approval"
   assert.match(client, /APPROVED PAYMENT QUEUE/);
   assert.match(client, /PAYMENT LEDGER/);
   assert.match(client, /YOUR CREATOR EARNINGS/);
-  assert.match(client, /Partner reward/);
-  assert.match(client, /View campaign/);
+  assert.match(client, /PARTNER REWARD/);
+  assert.match(client, /Open campaign/);
   assert.doesNotMatch(client, /campaign-vibe-head/);
   assert.match(client, /\/partners\/vibevibe-logo\.mp4/);
   assert.match(client, /single-campaign-grid/);
+  assert.match(client, /All campaigns/);
+  assert.match(client, /Product testing/);
+  assert.match(client, /Clipping/);
+  assert.match(client, />UGC</);
   assert.doesNotMatch(client, /Sticksy|RKS Builders/);
   assert.match(route, /approved_for_payment/);
   assert.match(route, /record_payment/);

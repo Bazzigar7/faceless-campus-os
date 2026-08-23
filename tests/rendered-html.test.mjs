@@ -461,9 +461,9 @@ test("Vibevibe partner lab runs a livestreamed bonding and graduation race", asy
     readFile(new URL("../app/api/onboarding/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(client, /FIRST-DAY LIVESTREAM/);
-  assert.match(client, /Five students become one live launch team/);
-  assert.match(client, /BONDING TARGET/);
+  assert.match(client, /LIVE TESTNET CAMPAIGN/);
+  assert.match(client, /Three things\. That’s it/);
+  assert.match(client, /Form your team/);
   assert.match(client, /0\.005 test ETH/);
   assert.match(client, /Educator-only founder feedback/);
   assert.match(client, /faceless-ip\/lightbulb\.png/);
@@ -497,9 +497,9 @@ test("Robinhood faucet hands test ETH from Campus to Rabby for Vibevibe", async 
     readFile(new URL("../lib/privy-server-wallet.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(client, /CAMPUS → RABBY → VIBEVIBE/);
+  assert.match(client, /Move test ETH to Rabby/);
   assert.match(client, /switchChain\(46630\)/);
-  assert.match(client, /Never use real ETH/);
+  assert.match(client, /Never send real ETH/);
   assert.match(provider, /supportedChains: \[sepolia, robinhoodTestnet\]/);
   assert.match(faucet, /"ethereum", "solana", "robinhood"/);
   assert.match(faucet, /chain === "robinhood" \? "ethereum" : chain/);

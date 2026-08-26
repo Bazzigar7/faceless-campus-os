@@ -527,6 +527,13 @@ test("wallet workspace combines faucet, transfers and network holdings", async (
   assert.match(client, /Wallet address/);
   assert.match(client, /\["overall", "ethereum", "solana", "robinhood"\]/);
   assert.match(client, /robinhoodPublicClient\.getBalance/);
+  assert.match(client, /WALLET OWNERSHIP LESSON/);
+  assert.match(client, /Import the private key into Rabby/);
+  assert.match(client, /Import the private key into Phantom/);
+  assert.match(client, /Never paste your private key here/);
+  assert.match(client, /Same wallet verified/);
+  assert.match(client, /exportEthereumWallet/);
+  assert.match(client, /exportSolanaWallet/);
   assert.match(suggestions, /like\(users\.username, `\$\{query\}%`\)/);
   assert.match(suggestions, /eq\(cohortMembers\.cohortId, membership\.cohortId\)/);
   assert.match(resolver, /Join your Campus cohort before sending tokens/);

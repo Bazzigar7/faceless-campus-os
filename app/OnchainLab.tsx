@@ -405,7 +405,7 @@ const campusTokenTransferAbi = [{
 }] as const;
 
 export default function OnchainLab() {
-  const { ready: privyReady, authenticated, user, login, logout, linkWallet, exportWallet: exportEthereumWallet } = usePrivy();
+  const { ready: privyReady, authenticated, user, login, logout, exportWallet: exportEthereumWallet } = usePrivy();
   const { identityToken } = useIdentityToken();
   const { refreshUser } = useUser();
   const { wallets: ethereumWallets } = useEthereumWallets();
@@ -548,6 +548,12 @@ export default function OnchainLab() {
     robinhood: { amount: "0.001", maxClaims: 1, enabled: false },
   });
   const [rabbyTransfer, setRabbyTransfer] = useState({ address: "", amount: "0.0008", status: "idle" as "idle" | "sending" | "sent" | "error", hash: "", error: "" });
+  const [walletOwnershipOpen, setWalletOwnershipOpen] = useState(false);
+  const [walletExportChain, setWalletExportChain] = useState<Chain>("ethereum");
+  const [walletExportSafety, setWalletExportSafety] = useState(false);
+  const [walletExported, setWalletExported] = useState<Record<Chain, boolean>>({ ethereum: false, solana: false });
+  const [walletImportedAddress, setWalletImportedAddress] = useState("");
+  const [walletImportStatus, setWalletImportStatus] = useState<"idle" | "verified" | "error">("idle");
   const [learningState, setLearningState] = useState<LearningState | null>(null);
   const [learningBusy, setLearningBusy] = useState(false);
   const [xpProofs, setXpProofs] = useState<XpProof[]>([]);
@@ -1631,11 +1637,34 @@ export default function OnchainLab() {
 
   async function exportWallet(chain: Chain) {
     try {
-      if (chain === "ethereum" && ethereumWallet) await exportEthereumWallet({ address: ethereumWallet.address });
-      if (chain === "solana" && solanaWallet) await exportSolanaWallet({ address: solanaWallet.address });
+      if (!walletExportSafety) return notify("Read and accept the wallet safety check before exporting");
+      if (chain === "ethereum") {
+        if (!ethereumWallet) return notify("Your Campus Ethereum wallet is unavailable");
+        await exportEthereumWallet({ address: ethereumWallet.address });
+      }
+      if (chain === "solana") {
+        if (!solanaWallet) return notify("Your Campus Solana wallet is unavailable");
+        await exportSolanaWallet({ address: solanaWallet.address });
+      }
+      setWalletExported((current) => ({ ...current, [chain]: true }));
+      notify(`${chain === "ethereum" ? "Ethereum" : "Solana"} key opened securely through Privy`);
     } catch {
       notify(`${chain === "ethereum" ? "Ethereum" : "Solana"} wallet export was cancelled`);
     }
+  }
+
+  function verifyImportedWallet() {
+    const imported = walletImportedAddress.trim();
+    const expected = walletExportChain === "ethereum" ? ethereumWallet?.address : solanaWallet?.address;
+    if (!expected || !imported) {
+      setWalletImportStatus("error");
+      return;
+    }
+    const matches = walletExportChain === "ethereum"
+      ? isAddress(imported) && imported.toLowerCase() === expected.toLowerCase()
+      : imported === expected;
+    setWalletImportStatus(matches ? "verified" : "error");
+    if (matches) notify(`Same ${walletExportChain === "ethereum" ? "EVM" : "Solana"} wallet verified`);
   }
 
   async function refreshBalances() {
@@ -2703,7 +2732,28 @@ export default function OnchainLab() {
                 {transferError && <div className="transfer-message error">{transferError}</div>}
                 {transferReceipt && <div className="transfer-message success"><span>✓</span><div><b>Sent to {transferReceipt.recipient}</b><small>{transferReceipt.amount} {faucetNetworkMeta[transferReceipt.chain].asset}</small></div><a href={transferReceipt.explorer} target="_blank" rel="noreferrer">Receipt ↗</a></div>}
               </section>}
-              {authenticated && <section className="wallet-control card"><div><span className="eyebrow">YOU CONTROL YOUR WALLETS</span><h3>Connect or export whenever you need.</h3><p>Faceless never receives or stores your private keys. Export opens Privy’s protected wallet screen.</p></div><div><button onClick={() => linkWallet({ walletChainType: "ethereum-and-solana" })}>Connect MetaMask or Phantom</button><button disabled={!ethereumWallet} onClick={() => exportWallet("ethereum")}>Export Ethereum</button><button disabled={!solanaWallet} onClick={() => exportWallet("solana")}>Export Solana</button></div></section>}
+              {authenticated && <section className="wallet-ownership card">
+                <header><div><span className="eyebrow">WALLET OWNERSHIP LESSON</span><h3>Take your Campus wallet with you.</h3><p>Export it, import it into another wallet app, then prove the address stayed the same.</p></div><button onClick={() => setWalletOwnershipOpen((open) => !open)}>{walletOwnershipOpen ? "Close lesson" : "Start lesson →"}</button></header>
+                {walletOwnershipOpen && <div className="wallet-ownership-body">
+                  <div className="wallet-export-chain" role="tablist" aria-label="Wallet export network"><button role="tab" aria-selected={walletExportChain === "ethereum"} className={walletExportChain === "ethereum" ? "active" : ""} onClick={() => { setWalletExportChain("ethereum"); setWalletImportedAddress(""); setWalletImportStatus("idle"); setWalletExportSafety(false); }}><span className="chain-coin eth">Ξ</span><span><b>Ethereum wallet</b><small>Import into Rabby · same address on Sepolia and Robinhood</small></span></button><button role="tab" aria-selected={walletExportChain === "solana"} className={walletExportChain === "solana" ? "active" : ""} onClick={() => { setWalletExportChain("solana"); setWalletImportedAddress(""); setWalletImportStatus("idle"); setWalletExportSafety(false); }}><span className="chain-coin sol">S</span><span><b>Solana wallet</b><small>Import into Phantom · same address on Devnet</small></span></button></div>
+                  <div className="wallet-ownership-steps">
+                    <article>
+                      <span className="wallet-step-number">1</span><div><small>GET TEST FUNDS</small><h4>{walletExportChain === "ethereum" ? "Claim Sepolia and Robinhood ETH." : "Claim Solana Devnet SOL."}</h4><p>The funds arrive in the Campus address you are about to export.</p><div className="wallet-step-actions">{(walletExportChain === "ethereum" ? ["ethereum", "robinhood"] as const : ["solana"] as const).map((chain) => { const config = faucetState?.chains.find((item) => item.chain === chain); const remaining = Math.max(0, (config?.maxClaims ?? 1) - (config?.claimsUsed ?? 0)); const ready = Boolean(config?.enabled && config.configured && faucetState?.signerReady); return <button key={chain} disabled={!ready || remaining === 0 || Boolean(faucetBusy)} onClick={() => claimCampusFaucet(chain)}>{faucetBusy === chain ? "Sending…" : remaining === 0 ? `${faucetNetworkMeta[chain].label} claimed ✓` : `Claim ${faucetNetworkMeta[chain].label}`}</button>; })}</div></div>
+                    </article>
+                    <article>
+                      <span className="wallet-step-number">2</span><div><small>EXPORT SECURELY</small><h4>Open your private key through Privy.</h4><p>{walletExportChain === "ethereum" ? "Privy exports an EVM private key. It controls this same 0x address on both test networks." : "Privy exports the Solana private key for this Devnet address."}</p><label className="wallet-safety-check"><input type="checkbox" checked={walletExportSafety} onChange={(event) => setWalletExportSafety(event.target.checked)} /><span><b>I am in a private place.</b><small>I will not screenshot, message, upload or paste this key into any website.</small></span></label><button className="wallet-export-button" disabled={!walletExportSafety || (walletExportChain === "ethereum" ? !ethereumWallet : !solanaWallet)} onClick={() => void exportWallet(walletExportChain)}>{walletExported[walletExportChain] ? "Open export again" : `Export ${walletExportChain === "ethereum" ? "Ethereum" : "Solana"} key`} →</button><em>Campus OS cannot see, copy or store what Privy reveals.</em></div>
+                    </article>
+                    <article>
+                      <span className="wallet-step-number">3</span><div><small>IMPORT THE SAME WALLET</small><h4>{walletExportChain === "ethereum" ? "Import the private key into Rabby." : "Import the private key into Phantom."}</h4><p>Choose “Import private key” in the wallet app. Do not create a new address for this lesson.</p><div className="wallet-step-actions"><a href={walletExportChain === "ethereum" ? "https://rabby.io/" : "https://phantom.com/download"} target="_blank" rel="noreferrer">Get {walletExportChain === "ethereum" ? "Rabby" : "Phantom"} ↗</a><button onClick={() => copyWalletAddress(walletExportChain)}>Copy Campus address</button></div></div>
+                    </article>
+                    <article>
+                      <span className="wallet-step-number">4</span><div><small>VERIFY THE PUBLIC ADDRESS</small><h4>Check that both apps show the same address.</h4><p>Paste only the public wallet address shown in {walletExportChain === "ethereum" ? "Rabby" : "Phantom"}. Never paste your private key here.</p><div className="wallet-address-check"><input value={walletImportedAddress} onChange={(event) => { setWalletImportedAddress(event.target.value); setWalletImportStatus("idle"); }} placeholder={walletExportChain === "ethereum" ? "0x… public address from Rabby" : "Public Solana address from Phantom"} /><button onClick={verifyImportedWallet}>Check address</button></div>{walletImportStatus === "verified" && <div className="wallet-import-result success"><b>✓ Same wallet verified.</b><span>Your Campus and {walletExportChain === "ethereum" ? "Rabby" : "Phantom"} addresses match.</span></div>}{walletImportStatus === "error" && <div className="wallet-import-result error"><b>Addresses do not match yet.</b><span>Check that you imported the key instead of creating a new wallet.</span></div>}</div>
+                    </article>
+                  </div>
+                  {walletImportStatus === "verified" && <footer className="wallet-ownership-finish"><div><span>✓</span><div><b>Wallet ownership lesson complete.</b><small>{walletExportChain === "ethereum" ? "You can now use this Rabby wallet on Vibevibe and approve Robinhood testnet transactions." : "You can now use this same wallet for Solana Devnet apps."}</small></div></div>{walletExportChain === "ethereum" && <a href="https://testnet.vibevibe.fun" target="_blank" rel="noreferrer">Open Vibevibe testnet ↗</a>}</footer>}
+                  <aside className="wallet-key-warning"><b>A private key is complete wallet access.</b><span>This classroom wallet is for testnets. Never add real funds to a key that was exposed, shared or copied on a public device.</span></aside>
+                </div>}
+              </section>}
               <section className="wallet-assets card">
                 <div className="wallet-assets-head"><div><span className="eyebrow">HOLDINGS</span><h3>Everything in your Campus wallets.</h3></div><button disabled={walletAssetsLoading} onClick={() => { void refreshBalances(); void loadWalletAssets(); }}>{walletAssetsLoading ? "Refreshing…" : "Refresh ↻"}</button></div>
                 <div className="wallet-asset-tabs" role="tablist" aria-label="Holdings network">{(["overall", "ethereum", "solana", "robinhood"] as WalletAssetView[]).map((view) => <button role="tab" aria-selected={walletAssetView === view} className={walletAssetView === view ? "active" : ""} key={view} onClick={() => setWalletAssetView(view)}>{view === "overall" ? "Overall" : view === "ethereum" ? "Ethereum" : view === "solana" ? "Solana" : "Robinhood"}</button>)}</div>

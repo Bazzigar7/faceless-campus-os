@@ -11,6 +11,20 @@ async function ensureConfigs(db: Awaited<ReturnType<typeof requireCampusUser>>["
     await db.insert(faucetConfigs).values({ chain, amount: defaults[chain], maxClaims: 1 })
       .onConflictDoNothing({ target: faucetConfigs.chain });
   }
+
+  const [ethereum] = await db.select().from(faucetConfigs).where(eq(faucetConfigs.chain, "ethereum")).limit(1);
+  const [robinhood] = await db.select().from(faucetConfigs).where(eq(faucetConfigs.chain, "robinhood")).limit(1);
+  if (
+    ethereum?.distributorWalletId
+    && ethereum.distributorAddress
+    && (robinhood?.distributorWalletId !== ethereum.distributorWalletId || robinhood?.distributorAddress !== ethereum.distributorAddress)
+  ) {
+    await db.update(faucetConfigs).set({
+      distributorWalletId: ethereum.distributorWalletId,
+      distributorAddress: ethereum.distributorAddress,
+      updatedAt: new Date().toISOString(),
+    }).where(eq(faucetConfigs.chain, "robinhood"));
+  }
 }
 
 async function stateFor(request: Request) {

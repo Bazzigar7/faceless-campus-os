@@ -509,7 +509,11 @@ test("Robinhood faucet hands test ETH from Campus to Rabby for Vibevibe", async 
   assert.match(provider, /supportedChains: \[sepolia, robinhoodTestnet\]/);
   assert.match(faucet, /"ethereum", "solana", "robinhood"/);
   assert.match(faucet, /chain === "robinhood" \? "ethereum" : chain/);
-  assert.match(admin, /createDistributorWallet\(chain === "robinhood" \? "ethereum" : chain\)/);
+  assert.match(admin, /for \(const chain of \["ethereum", "solana"\] as const\)/);
+  assert.match(admin, /chain: "robinhood"/);
+  assert.match(admin, /distributorWalletId: ethereum\.distributorWalletId/);
+  assert.match(admin, /distributorAddress: ethereum\.distributorAddress/);
+  assert.match(faucet, /where\(eq\(faucetConfigs\.chain, "robinhood"\)\)/);
   assert.match(signer, /input\.chain === "robinhood" \? 46630 : 11155111/);
   assert.match(schema, /\["ethereum", "solana", "robinhood"\]/);
 });

@@ -20,16 +20,16 @@ export async function POST(request: Request) {
         return Response.json({ error: "Add the Privy app secret to activate secure distributor wallets" }, { status: 503 });
       }
       const created: Array<{ chain: CampusFaucetNetwork; address: string }> = [];
-      for (const chain of ["ethereum", "solana", "robinhood"] as const) {
+      for (const chain of ["ethereum", "solana"] as const) {
         const [existing] = await db.select().from(faucetConfigs).where(eq(faucetConfigs.chain, chain)).limit(1);
         if (existing?.distributorWalletId && existing.distributorAddress) {
           created.push({ chain, address: existing.distributorAddress });
           continue;
         }
-        const wallet = await createDistributorWallet(chain === "robinhood" ? "ethereum" : chain);
+        const wallet = await createDistributorWallet(chain);
         await db.insert(faucetConfigs).values({
           chain,
-          amount: chain === "solana" ? "0.05" : chain === "robinhood" ? "0.001" : "0.002",
+          amount: chain === "solana" ? "0.05" : "0.002",
           maxClaims: 1,
           distributorWalletId: wallet.id,
           distributorAddress: wallet.address,
@@ -40,6 +40,28 @@ export async function POST(request: Request) {
         });
         created.push({ chain, address: wallet.address });
       }
+
+      const [ethereum] = await db.select().from(faucetConfigs).where(eq(faucetConfigs.chain, "ethereum")).limit(1);
+      if (!ethereum?.distributorWalletId || !ethereum.distributorAddress) {
+        return Response.json({ error: "The shared EVM distributor wallet could not be prepared" }, { status: 503 });
+      }
+      await db.insert(faucetConfigs).values({
+        chain: "robinhood",
+        amount: "0.001",
+        maxClaims: 1,
+        distributorWalletId: ethereum.distributorWalletId,
+        distributorAddress: ethereum.distributorAddress,
+        updatedBy: student.id,
+      }).onConflictDoUpdate({
+        target: faucetConfigs.chain,
+        set: {
+          distributorWalletId: ethereum.distributorWalletId,
+          distributorAddress: ethereum.distributorAddress,
+          updatedBy: student.id,
+          updatedAt: new Date().toISOString(),
+        },
+      });
+      created.push({ chain: "robinhood", address: ethereum.distributorAddress });
       return Response.json({ ok: true, wallets: created });
     }
 

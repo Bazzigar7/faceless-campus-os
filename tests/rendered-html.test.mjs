@@ -2,10 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-async function render() {
+async function loadWorker() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
+  return (await import(workerUrl.href)).default;
+}
+
+async function render() {
+  const worker = await loadWorker();
 
   return worker.fetch(
     new Request("http://localhost/", { headers: { accept: "text/html" } }),
@@ -13,6 +17,50 @@ async function render() {
     { waitUntil() {}, passThroughOnException() {} },
   );
 }
+
+test("production password gate protects pages and APIs without storing the password", async () => {
+  const worker = await loadWorker();
+  const env = {
+    ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
+    SITE_PASSWORD: "test-only-password",
+  };
+  const ctx = { waitUntil() {}, passThroughOnException() {} };
+
+  const blockedPage = await worker.fetch(
+    new Request("http://localhost/", { headers: { accept: "text/html" } }),
+    env,
+    ctx,
+  );
+  assert.equal(blockedPage.status, 302);
+  assert.equal(blockedPage.headers.get("location"), "/login");
+
+  const blockedApi = await worker.fetch(new Request("http://localhost/api/profile"), env, ctx);
+  assert.equal(blockedApi.status, 401);
+
+  const loginPage = await worker.fetch(
+    new Request("http://localhost/login", { headers: { accept: "text/html" } }),
+    env,
+    ctx,
+  );
+  assert.equal(loginPage.status, 200);
+  assert.match(await loginPage.text(), /Private build/);
+
+  const login = await worker.fetch(
+    new Request("http://localhost/login", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "password=test-only-password",
+    }),
+    env,
+    ctx,
+  );
+  assert.equal(login.status, 303);
+  assert.match(login.headers.get("set-cookie") ?? "", /faceless_campus_gate=.*HttpOnly.*Secure.*SameSite=Strict/);
+
+  const environment = await readFile(new URL("../.env.example", import.meta.url), "utf8");
+  assert.match(environment, /^SITE_PASSWORD=$/m);
+  assert.doesNotMatch(environment, /test-only-password/);
+});
 
 test("server-renders Faceless Campus OS onboarding", async () => {
   const response = await render();

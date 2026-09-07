@@ -31,6 +31,9 @@ async function stateFor(request: Request) {
   const { db, student } = await requireCampusUser(request);
   await ensureConfigs(db);
   const configs = await db.select().from(faucetConfigs).orderBy(asc(faucetConfigs.chain));
+  const treasuryWallets = student.role === "owner"
+    ? await db.select({ chain: wallets.chain, address: wallets.address }).from(wallets).where(and(eq(wallets.userId, student.id), eq(wallets.isPrimary, true)))
+    : [];
   const counts = await db.select({ chain: faucetClaims.chain, value: count() }).from(faucetClaims)
     .where(and(eq(faucetClaims.userId, student.id), inArray(faucetClaims.status, ["queued", "processing", "sent"])))
     .groupBy(faucetClaims.chain);
@@ -54,6 +57,9 @@ async function stateFor(request: Request) {
       claimsUsed: countMap.get(config.chain) ?? 0,
       enabled: config.enabled,
       distributorAddress: student.role === "owner" ? config.distributorAddress : undefined,
+      treasuryAddress: student.role === "owner"
+        ? treasuryWallets.find((wallet) => wallet.chain === (config.chain === "robinhood" ? "ethereum" : config.chain))?.address
+        : undefined,
       configured: Boolean(config.distributorWalletId && config.distributorAddress),
     })),
     recent: recent.reverse().slice(0, 6),

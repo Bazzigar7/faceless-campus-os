@@ -561,6 +561,12 @@ test("Robinhood faucet hands test ETH from Campus to Rabby for Vibevibe", async 
   assert.match(admin, /chain: "robinhood"/);
   assert.match(admin, /distributorWalletId: ethereum\.distributorWalletId/);
   assert.match(admin, /distributorAddress: ethereum\.distributorAddress/);
+  assert.match(admin, /body\.action === "withdraw"/);
+  assert.match(admin, /sendFaucetTransfer/);
+  assert.match(admin, /eq\(wallets\.userId, student\.id\)/);
+  assert.match(client, /Your wallet controls the treasury/);
+  assert.match(client, /Move to my wallet/);
+  assert.match(faucet, /treasuryAddress/);
   assert.match(faucet, /where\(eq\(faucetConfigs\.chain, "robinhood"\)\)/);
   assert.match(signer, /input\.chain === "robinhood" \? 46630 : 11155111/);
   assert.match(schema, /\["ethereum", "solana", "robinhood"\]/);

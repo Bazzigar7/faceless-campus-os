@@ -38,7 +38,7 @@ type Lesson = { id: number; title: string; copy: string; time: string; unit: str
 type Recipient = { username: string; displayName: string; wallets: Array<{ chain: Chain; address: string }> };
 type TransferReceipt = { chain: FaucetNetwork; hash: string; recipient: string; amount: string; explorer: string };
 type RecipientSuggestion = { username: string; displayName: string };
-type FaucetChainState = { chain: FaucetNetwork; amount: string; maxClaims: number; claimsUsed: number; enabled: boolean; configured: boolean; distributorAddress?: string };
+type FaucetChainState = { chain: FaucetNetwork; amount: string; maxClaims: number; claimsUsed: number; enabled: boolean; configured: boolean; distributorAddress?: string; treasuryAddress?: string };
 type FaucetState = {
   role: "student" | "educator" | "owner";
   signerReady: boolean;
@@ -542,6 +542,8 @@ export default function OnchainLab() {
   const [faucetState, setFaucetState] = useState<FaucetState | null>(null);
   const [faucetBusy, setFaucetBusy] = useState<FaucetNetwork | "prepare" | "">("");
   const [faucetError, setFaucetError] = useState("");
+  const [faucetWithdrawDraft, setFaucetWithdrawDraft] = useState<Record<FaucetNetwork, string>>({ ethereum: "2.49", solana: "", robinhood: "" });
+  const [faucetWithdrawReceipt, setFaucetWithdrawReceipt] = useState<{ chain: FaucetNetwork; hash: string } | null>(null);
   const [faucetDraft, setFaucetDraft] = useState<Record<FaucetNetwork, { amount: string; maxClaims: number; enabled: boolean }>>({
     ethereum: { amount: "0.002", maxClaims: 1, enabled: false },
     solana: { amount: "0.05", maxClaims: 1, enabled: false },
@@ -1555,6 +1557,32 @@ export default function OnchainLab() {
       await loadFaucetState();
     } catch (error) {
       setFaucetError(error instanceof Error ? error.message : "Faucet settings could not be saved");
+    } finally {
+      setFaucetBusy("");
+    }
+  }
+
+  async function withdrawFaucetFunds(chain: FaucetNetwork) {
+    if (!identityToken) return;
+    const amount = faucetWithdrawDraft[chain].trim();
+    if (!amount) return setFaucetError("Enter the amount to move back to your treasury wallet");
+    setFaucetBusy(chain);
+    setFaucetError("");
+    setFaucetWithdrawReceipt(null);
+    try {
+      const response = await fetch("/api/faucet/admin", {
+        method: "POST",
+        headers: { "content-type": "application/json", "privy-id-token": identityToken },
+        body: JSON.stringify({ action: "withdraw", chain, amount }),
+      });
+      const result = await response.json() as { ok?: boolean; transactionHash?: string; error?: string };
+      if (!response.ok || !result.ok || !result.transactionHash) throw new Error(result.error ?? "Faucet funds could not be moved");
+      setFaucetWithdrawReceipt({ chain, hash: result.transactionHash });
+      notify(`${amount} ${chain === "solana" ? "SOL" : "ETH"} moved to your Campus treasury wallet`);
+      await loadFaucetState();
+      window.setTimeout(() => void refreshBalances(), 1800);
+    } catch (error) {
+      setFaucetError(error instanceof Error ? error.message : "Faucet funds could not be moved");
     } finally {
       setFaucetBusy("");
     }
@@ -3078,7 +3106,7 @@ export default function OnchainLab() {
                 {Boolean(campaignState?.payouts.length) && <div className="payout-ledger"><h4>PAYMENT LEDGER</h4>{campaignState?.payouts.slice(0, 8).map((payout) => <p key={payout.id}><span><b>{payout.campaign?.title ?? "Campaign payment"}</b><small>{payout.transactionReference || "Reference pending"}</small></span><strong>{payout.currency} {payout.amount} · PAID</strong></p>)}</div>}
               </section>
               <section className="faucet-admin card">
-                <div className="faucet-admin-head"><div><span className="eyebrow">CAMPUS FAUCET CONTROL</span><h3>Fund once. Let verified students claim.</h3><p>The distributor wallets are testnet-only and managed by Privy. Campus OS stores no wallet private keys.</p></div><button onClick={prepareFaucetWallets} disabled={faucetBusy === "prepare" || faucetState?.chains.every((item) => item.configured)}>{faucetBusy === "prepare" ? "Preparing…" : faucetState?.chains.every((item) => item.configured) ? "Wallets prepared ✓" : "Prepare all wallets"}</button></div>
+                <div className="faucet-admin-head"><div><span className="eyebrow">CAMPUS FAUCET CONTROL</span><h3>Your wallet controls the treasury.</h3><p>Load the limited distributor when claims open, then return unused test funds to your own Campus wallet at any time. Private keys never enter Campus OS.</p></div><button onClick={prepareFaucetWallets} disabled={faucetBusy === "prepare" || faucetState?.chains.every((item) => item.configured)}>{faucetBusy === "prepare" ? "Preparing…" : faucetState?.chains.every((item) => item.configured) ? "Wallets prepared ✓" : "Prepare all wallets"}</button></div>
                 <div className="faucet-admin-grid">
                   {(["ethereum", "solana", "robinhood"] as const).map((chain) => {
                     const config = faucetState?.chains.find((item) => item.chain === chain);
@@ -3086,6 +3114,7 @@ export default function OnchainLab() {
                     const meta = faucetNetworkMeta[chain];
                     return <article key={chain}>
                       <div className="faucet-chain"><span className={`chain-coin ${meta.className}`}>{meta.icon}</span><span><small>{meta.label} DISTRIBUTOR</small><b>{config?.distributorAddress ? shortenAddress(config.distributorAddress) : "Not prepared"}</b></span>{config?.distributorAddress && <button className="mini-copy" onClick={() => navigator.clipboard.writeText(config.distributorAddress || "").then(() => notify("Distributor address copied"))}>Copy</button>}</div>
+                      <div className="faucet-treasury"><span><small>YOUR TREASURY</small><b>{config?.treasuryAddress ? shortenAddress(config.treasuryAddress) : "Wallet unavailable"}</b></span><div><input aria-label={`Withdraw ${meta.label} amount`} inputMode="decimal" value={faucetWithdrawDraft[chain]} onChange={(event) => setFaucetWithdrawDraft((current) => ({ ...current, [chain]: event.target.value }))} placeholder={`Amount in ${meta.asset}`} /><button disabled={!config?.configured || !config?.treasuryAddress || faucetBusy === chain} onClick={() => void withdrawFaucetFunds(chain)}>{faucetBusy === chain ? "Moving…" : "Move to my wallet"}</button></div></div>
                       <label>Amount per claim<input inputMode="decimal" value={draft.amount} onChange={(event) => setFaucetDraft((current) => ({ ...current, [chain]: { ...current[chain], amount: event.target.value } }))} /></label>
                       <label>Claims per student<select value={draft.maxClaims} onChange={(event) => setFaucetDraft((current) => ({ ...current, [chain]: { ...current[chain], maxClaims: Number(event.target.value) } }))}><option value={1}>1 claim</option><option value={2}>2 claims</option><option value={3}>3 claims</option></select></label>
                       <label className="faucet-toggle"><input aria-label={`Open ${meta.label} student claims`} type="checkbox" checked={draft.enabled} onChange={(event) => setFaucetDraft((current) => ({ ...current, [chain]: { ...current[chain], enabled: event.target.checked } }))} /><span><b>Open student claims</b><small>Only enable after loading test funds.</small></span></label>
@@ -3094,6 +3123,7 @@ export default function OnchainLab() {
                   })}
                 </div>
                 {faucetError && <div className="faucet-message admin">{faucetError}</div>}
+                {faucetWithdrawReceipt && <a className="faucet-withdraw-receipt" href={faucetNetworkMeta[faucetWithdrawReceipt.chain].explorer(faucetWithdrawReceipt.hash)} target="_blank" rel="noreferrer">Funds moved ✓ View transaction ↗</a>}
                 {!faucetState?.signerReady && <small className="activation-note">One secure activation step remains before distributor wallets can be prepared.</small>}
               </section>
             </div>

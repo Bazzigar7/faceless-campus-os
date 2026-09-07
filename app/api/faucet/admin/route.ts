@@ -1,19 +1,52 @@
-import { eq } from "drizzle-orm";
-import { faucetConfigs } from "../../../../db/schema";
+import { and, eq } from "drizzle-orm";
+import { faucetConfigs, wallets } from "../../../../db/schema";
 import { faucetError, requireOwner } from "../../../../lib/faucet-auth";
-import { createDistributorWallet, isPrivyServerWalletReady } from "../../../../lib/privy-server-wallet";
+import { createDistributorWallet, isPrivyServerWalletReady, sendFaucetTransfer } from "../../../../lib/privy-server-wallet";
 import type { CampusFaucetNetwork } from "../../../../lib/wallet-provider";
 
 export async function POST(request: Request) {
   try {
     const { db, student } = await requireOwner(request);
     const body = await request.json() as {
-      action?: "prepare" | "update";
+      action?: "prepare" | "update" | "withdraw";
       chain?: CampusFaucetNetwork;
       amount?: string;
       maxClaims?: number;
       enabled?: boolean;
     };
+
+    if (body.action === "withdraw") {
+      const chain = body.chain;
+      if (chain !== "ethereum" && chain !== "solana" && chain !== "robinhood") return Response.json({ error: "Choose a faucet network" }, { status: 400 });
+      const amount = (body.amount || "").trim();
+      if (!/^\d+(\.\d{1,18})?$/.test(amount) || Number(amount) <= 0) return Response.json({ error: "Enter a valid withdrawal amount" }, { status: 400 });
+      if (Number(amount) > (chain === "solana" ? 1000 : 10)) return Response.json({ error: "Withdrawal amount is above the safety limit" }, { status: 400 });
+
+      const [config] = await db.select().from(faucetConfigs).where(eq(faucetConfigs.chain, chain)).limit(1);
+      if (!config?.distributorWalletId || !config.distributorAddress || !isPrivyServerWalletReady()) {
+        return Response.json({ error: "The distributor wallet is not ready" }, { status: 503 });
+      }
+      const treasuryChain = chain === "robinhood" ? "ethereum" : chain;
+      const [treasury] = await db.select().from(wallets).where(and(
+        eq(wallets.userId, student.id),
+        eq(wallets.chain, treasuryChain),
+        eq(wallets.isPrimary, true),
+      )).limit(1);
+      if (!treasury?.address) return Response.json({ error: "Your Campus treasury wallet is unavailable" }, { status: 409 });
+      if (treasury.address.toLowerCase() === config.distributorAddress.toLowerCase()) {
+        return Response.json({ error: "Treasury and distributor already use the same address" }, { status: 409 });
+      }
+
+      const transactionHash = await sendFaucetTransfer({
+        chain,
+        walletId: config.distributorWalletId,
+        distributorAddress: config.distributorAddress,
+        destination: treasury.address,
+        amount,
+        claimId: crypto.randomUUID(),
+      });
+      return Response.json({ ok: true, chain, amount, destination: treasury.address, transactionHash });
+    }
 
     if (body.action === "prepare") {
       if (!isPrivyServerWalletReady()) {

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": null,
+  "rewrites": [
+    {
+      "source": "/:path*",
+      "destination": "https://campusos.vigneshbhaiya7.chatgpt.site/:path*"
+    }
+  ]
+}

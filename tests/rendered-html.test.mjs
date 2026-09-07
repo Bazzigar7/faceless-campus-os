@@ -68,10 +68,16 @@ test("Vercel provides a clean Campus OS address without duplicating the app", as
   assert.equal(config.framework, null);
   assert.equal(config.buildCommand, "echo 'CampusOS gateway ready'");
   assert.equal(config.outputDirectory, "vercel-gateway");
-  assert.deepEqual(config.rewrites, [{
-    source: "/:path*",
-    destination: "https://campusos.vigneshbhaiya7.chatgpt.site/:path*",
-  }]);
+  assert.deepEqual(config.rewrites, [
+    {
+      source: "/",
+      destination: "https://campusos.vigneshbhaiya7.chatgpt.site/",
+    },
+    {
+      source: "/:path*",
+      destination: "https://campusos.vigneshbhaiya7.chatgpt.site/:path*",
+    },
+  ]);
   assert.match(fallback, /<title>CampusOS<\/title>/);
 });
 

@@ -1,7 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "buildCommand": null,
+  "buildCommand": "echo 'CampusOS gateway ready'",
+  "outputDirectory": "vercel-gateway",
   "rewrites": [
     {
       "source": "/:path*",

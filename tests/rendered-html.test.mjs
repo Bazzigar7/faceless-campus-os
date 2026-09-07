@@ -64,12 +64,15 @@ test("production password gate protects pages and APIs without storing the passw
 
 test("Vercel provides a clean Campus OS address without duplicating the app", async () => {
   const config = JSON.parse(await readFile(new URL("../vercel.json", import.meta.url), "utf8"));
+  const fallback = await readFile(new URL("../vercel-gateway/index.html", import.meta.url), "utf8");
   assert.equal(config.framework, null);
-  assert.equal(config.buildCommand, null);
+  assert.equal(config.buildCommand, "echo 'CampusOS gateway ready'");
+  assert.equal(config.outputDirectory, "vercel-gateway");
   assert.deepEqual(config.rewrites, [{
     source: "/:path*",
     destination: "https://campusos.vigneshbhaiya7.chatgpt.site/:path*",
   }]);
+  assert.match(fallback, /<title>CampusOS<\/title>/);
 });
 
 test("server-renders Faceless Campus OS onboarding", async () => {

@@ -625,3 +625,10 @@ test("wallet workspace combines faucet, transfers and network holdings", async (
   assert.match(resolver, /innerJoin\(wallets, eq\(wallets\.userId, users\.id\)\)/);
   assert.match(resolver, /requireCampusUser\(request\)/);
 });
+
+test("mobile navigation prioritises campaigns and wallet instead of build", async () => {
+  const client = await readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8");
+  assert.match(client, /\["home", "learn", "mask", "campaigns", "wallet"\]/);
+  assert.match(client, /mobileNavItems\.map/);
+  assert.doesNotMatch(client, /\["home", "learn", "mask", "create", "campaigns"\]/);
+});

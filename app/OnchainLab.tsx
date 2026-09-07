@@ -275,6 +275,7 @@ const navItems: { id: Tab; label: string; mark: string }[] = [
   { id: "passport", label: "My passport", mark: "◇" },
   { id: "admin", label: "Educator view", mark: "▦" },
 ];
+const mobileNavItems = (["home", "learn", "mask", "campaigns", "wallet"] as Tab[]).map((id) => navItems.find((item) => item.id === id)!);
 
 const ethereumLessons: Lesson[] = [
   { id: 1, title: "Meet Ethereum", copy: "A shared computer for money, ownership and applications.", time: "0:58", unit: "FOUNDATIONS", state: "complete", action: "Explore the network", course: "ethereum", video: "https://zwmraqkjvpqnafdfgkiz.supabase.co/storage/v1/object/public/assets/bc1b33b9-875b-4fb0-9c83-9664a979f699-meet-ethereum-v2-faceless-approved.mp4" },
@@ -3250,7 +3251,7 @@ export default function OnchainLab() {
           )}
         </div>
 
-        <nav className="mobile-nav" aria-label="Mobile navigation">{navItems.filter((item) => ["home", "learn", "mask", "create", "campaigns"].includes(item.id)).map((item) => <button key={item.id} className={active === item.id || (item.id === "create" && (active === "games" || active === "launchpad")) ? "active" : ""} onClick={() => setActive(item.id)}><span>{item.mark}</span>{item.label.split(" ")[0]}</button>)}</nav>
+        <nav className="mobile-nav" aria-label="Mobile navigation">{mobileNavItems.map((item) => <button key={item.id} className={active === item.id ? "active" : ""} onClick={() => setActive(item.id)}><span>{item.mark}</span>{item.label.split(" ")[0]}</button>)}</nav>
       </section>
 
       {!onboarded && (

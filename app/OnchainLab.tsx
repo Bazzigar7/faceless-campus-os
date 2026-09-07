@@ -39,6 +39,7 @@ type Recipient = { username: string; displayName: string; wallets: Array<{ chain
 type TransferReceipt = { chain: FaucetNetwork; hash: string; recipient: string; amount: string; explorer: string };
 type RecipientSuggestion = { username: string; displayName: string };
 type FaucetChainState = { chain: FaucetNetwork; amount: string; maxClaims: number; claimsUsed: number; enabled: boolean; configured: boolean; distributorAddress?: string; treasuryAddress?: string };
+type FaucetBalances = Record<FaucetNetwork, { distributor: number | null; treasury: number | null }>;
 type FaucetState = {
   role: "student" | "educator" | "owner";
   signerReady: boolean;
@@ -544,6 +545,12 @@ export default function OnchainLab() {
   const [faucetError, setFaucetError] = useState("");
   const [faucetWithdrawDraft, setFaucetWithdrawDraft] = useState<Record<FaucetNetwork, string>>({ ethereum: "2.49", solana: "", robinhood: "" });
   const [faucetWithdrawReceipt, setFaucetWithdrawReceipt] = useState<{ chain: FaucetNetwork; hash: string } | null>(null);
+  const [faucetBalances, setFaucetBalances] = useState<FaucetBalances>({
+    ethereum: { distributor: null, treasury: null },
+    solana: { distributor: null, treasury: null },
+    robinhood: { distributor: null, treasury: null },
+  });
+  const [faucetBalancesLoading, setFaucetBalancesLoading] = useState(false);
   const [faucetDraft, setFaucetDraft] = useState<Record<FaucetNetwork, { amount: string; maxClaims: number; enabled: boolean }>>({
     ethereum: { amount: "0.002", maxClaims: 1, enabled: false },
     solana: { amount: "0.05", maxClaims: 1, enabled: false },
@@ -773,9 +780,41 @@ export default function OnchainLab() {
         maxClaims: item.maxClaims,
         enabled: item.enabled,
       }])) as Record<FaucetNetwork, { amount: string; maxClaims: number; enabled: boolean }>);
+      if (result.role === "owner") void loadFaucetBalances(result);
       setFaucetError("");
     } catch (error) {
       setFaucetError(error instanceof Error ? error.message : "Campus Faucet is unavailable");
+    }
+  }
+
+  async function loadFaucetBalances(state: FaucetState = faucetState as FaucetState) {
+    if (!state || state.role !== "owner") return;
+    setFaucetBalancesLoading(true);
+    try {
+      const entries = await Promise.all(state.chains.map(async (item) => {
+        const readBalance = async (walletAddress?: string) => {
+          if (!walletAddress) return null;
+          try {
+            if (item.chain === "solana") {
+              const result = await solanaDevnetRpc.getBalance(address(walletAddress)).send();
+              return Number(result.value) / 1e9;
+            }
+            const client = item.chain === "robinhood" ? robinhoodPublicClient : sepoliaPublicClient;
+            const result = await client.getBalance({ address: walletAddress as Hex });
+            return Number(result) / 1e18;
+          } catch {
+            return null;
+          }
+        };
+        const [distributor, treasury] = await Promise.all([
+          readBalance(item.distributorAddress),
+          readBalance(item.treasuryAddress),
+        ]);
+        return [item.chain, { distributor, treasury }] as const;
+      }));
+      setFaucetBalances(Object.fromEntries(entries) as FaucetBalances);
+    } finally {
+      setFaucetBalancesLoading(false);
     }
   }
 
@@ -2742,8 +2781,8 @@ export default function OnchainLab() {
               <section className="wallet-console card">
                 <header><div><span className="eyebrow">WALLET & TEST FUNDS</span><h2>{campusUsername ? `@${campusUsername}` : wallet}</h2></div><small><i /> TESTNET ONLY</small></header>
                 <div className="wallet-console-addresses">
-                  <article><span className="chain-coin eth">Ξ</span><div><small>EVM ADDRESS · SEPOLIA + ROBINHOOD</small><code>{ethWalletAddress}</code></div><button onClick={() => copyWalletAddress("ethereum")}>Copy</button></article>
-                  <article><span className="chain-coin sol">S</span><div><small>SOLANA ADDRESS · DEVNET</small><code>{solWalletAddress}</code></div><button onClick={() => copyWalletAddress("solana")}>Copy</button></article>
+                  <article><span className="chain-coin eth">Ξ</span><div><small>EVM ADDRESS · SEPOLIA + ROBINHOOD</small><code>{ethWalletAddress}</code><strong>{balance.toFixed(4)} Sepolia ETH · {robinhoodBalance.toFixed(4)} Robinhood ETH</strong></div><button onClick={() => copyWalletAddress("ethereum")}>Copy</button></article>
+                  <article><span className="chain-coin sol">S</span><div><small>SOLANA ADDRESS · DEVNET</small><code>{solWalletAddress}</code><strong>{solBalance.toFixed(4)} Devnet SOL</strong></div><button onClick={() => copyWalletAddress("solana")}>Copy</button></article>
                 </div>
                 <div className="wallet-console-claims">
                   {(["ethereum", "solana", "robinhood"] as const).map((chain) => {
@@ -3116,7 +3155,7 @@ export default function OnchainLab() {
                 {Boolean(campaignState?.payouts.length) && <div className="payout-ledger"><h4>PAYMENT LEDGER</h4>{campaignState?.payouts.slice(0, 8).map((payout) => <p key={payout.id}><span><b>{payout.campaign?.title ?? "Campaign payment"}</b><small>{payout.transactionReference || "Reference pending"}</small></span><strong>{payout.currency} {payout.amount} · PAID</strong></p>)}</div>}
               </section>
               <section className="faucet-admin card">
-                <div className="faucet-admin-head"><div><span className="eyebrow">CAMPUS FAUCET CONTROL</span><h3>Your wallet controls the treasury.</h3><p>Load the limited distributor when claims open, then return unused test funds to your own Campus wallet at any time. Private keys never enter Campus OS.</p></div><button onClick={prepareFaucetWallets} disabled={faucetBusy === "prepare" || faucetState?.chains.every((item) => item.configured)}>{faucetBusy === "prepare" ? "Preparing…" : faucetState?.chains.every((item) => item.configured) ? "Wallets prepared ✓" : "Prepare all wallets"}</button></div>
+                <div className="faucet-admin-head"><div><span className="eyebrow">CAMPUS FAUCET CONTROL</span><h3>Your wallet controls the treasury.</h3><p>Load the limited distributor when claims open, then return unused test funds to your own Campus wallet at any time. Private keys never enter Campus OS.</p></div><button onClick={() => faucetState?.chains.every((item) => item.configured) ? void loadFaucetBalances() : void prepareFaucetWallets()} disabled={faucetBusy === "prepare" || faucetBalancesLoading}>{faucetBusy === "prepare" ? "Preparing…" : faucetBalancesLoading ? "Refreshing…" : faucetState?.chains.every((item) => item.configured) ? "Refresh balances ↻" : "Prepare all wallets"}</button></div>
                 <div className="faucet-admin-grid">
                   {(["ethereum", "solana", "robinhood"] as const).map((chain) => {
                     const config = faucetState?.chains.find((item) => item.chain === chain);
@@ -3124,6 +3163,7 @@ export default function OnchainLab() {
                     const meta = faucetNetworkMeta[chain];
                     return <article key={chain}>
                       <div className="faucet-chain"><span className={`chain-coin ${meta.className}`}>{meta.icon}</span><span><small>{meta.label} DISTRIBUTOR</small><b>{config?.distributorAddress ? shortenAddress(config.distributorAddress) : "Not prepared"}</b></span>{config?.distributorAddress && <button className="mini-copy" onClick={() => navigator.clipboard.writeText(config.distributorAddress || "").then(() => notify("Distributor address copied"))}>Copy</button>}</div>
+                      <div className="faucet-balance-row"><span><small>AVAILABLE FOR STUDENTS</small><b>{faucetBalances[chain].distributor === null ? "—" : `${faucetBalances[chain].distributor.toFixed(6)} ${meta.asset}`}</b></span><span><small>YOUR TREASURY</small><b>{faucetBalances[chain].treasury === null ? "—" : `${faucetBalances[chain].treasury.toFixed(6)} ${meta.asset}`}</b></span></div>
                       <div className="faucet-treasury"><span><small>YOUR TREASURY</small><b>{config?.treasuryAddress ? shortenAddress(config.treasuryAddress) : "Wallet unavailable"}</b></span><div><input aria-label={`Withdraw ${meta.label} amount`} inputMode="decimal" value={faucetWithdrawDraft[chain]} onChange={(event) => setFaucetWithdrawDraft((current) => ({ ...current, [chain]: event.target.value }))} placeholder={`Amount in ${meta.asset}`} /><button disabled={!config?.configured || !config?.treasuryAddress || faucetBusy === chain} onClick={() => void withdrawFaucetFunds(chain)}>{faucetBusy === chain ? "Moving…" : "Move to my wallet"}</button></div></div>
                       <label>Amount per claim<input inputMode="decimal" value={draft.amount} onChange={(event) => setFaucetDraft((current) => ({ ...current, [chain]: { ...current[chain], amount: event.target.value } }))} /></label>
                       <label>Claims per student<select value={draft.maxClaims} onChange={(event) => setFaucetDraft((current) => ({ ...current, [chain]: { ...current[chain], maxClaims: Number(event.target.value) } }))}><option value={1}>1 claim</option><option value={2}>2 claims</option><option value={3}>3 claims</option></select></label>

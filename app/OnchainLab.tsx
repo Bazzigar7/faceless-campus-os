@@ -604,6 +604,13 @@ export default function OnchainLab() {
   });
   const selectedMarket = marketCollections.find((collection) => collection.id === selectedMarketId) ?? null;
   const selectedToken = campusTokens.find((token) => token.id === selectedTokenId) ?? null;
+  const selectedFaucetDistributor = faucetState?.chains.find((item) => item.chain === transferNetwork)?.distributorAddress;
+  const fundingFaucet = faucetState?.role === "owner"
+    && transferTargetMode === "address"
+    && Boolean(selectedFaucetDistributor)
+    && (transferNetwork === "solana"
+      ? directRecipientAddress.trim() === selectedFaucetDistributor
+      : directRecipientAddress.trim().toLowerCase() === selectedFaucetDistributor?.toLowerCase());
   const visibleWalletTokens = campusTokens.filter((token) => BigInt(token.owned) > 0n && (walletAssetView === "overall" || token.chain === walletAssetView));
   const visibleWalletNfts = walletNfts.filter((asset) => walletAssetView === "overall" || asset.chain === walletAssetView);
   const liveRwaAssets = rwaState?.assets ?? rwaAssetFallbacks;
@@ -1772,8 +1779,9 @@ export default function OnchainLab() {
       if (walletChain === "ethereum") {
         if (!ethereumWallet) throw new Error("Ethereum wallet is unavailable");
         const value = decimalToUnits(transferAmount, 18);
-        const maxValue = transferNetwork === "robinhood" ? 5_000_000_000_000_000n : 50_000_000_000_000_000n;
-        if (value <= 0n || value > maxValue) throw new Error(`Send between 0 and ${transferNetwork === "robinhood" ? "0.005" : "0.05"} test ETH`);
+        const maximum = fundingFaucet ? "10" : transferNetwork === "robinhood" ? "0.005" : "0.05";
+        const maxValue = parseEther(maximum);
+        if (value <= 0n || value > maxValue) throw new Error(`Send between 0 and ${maximum} test ETH`);
         const chainId = transferNetwork === "robinhood" ? 46630 : 11155111;
         await ethereumWallet.switchChain(chainId);
         const { hash } = await sendEthereumTransaction(
@@ -1785,7 +1793,8 @@ export default function OnchainLab() {
         if (!solanaWallet) throw new Error("Solana wallet is unavailable");
         address(destination);
         const lamports = decimalToUnits(transferAmount, 9);
-        if (lamports <= 0n || lamports > 1_000_000_000n) throw new Error("Send between 0 and 1 test SOL");
+        const maximumLamports = fundingFaucet ? 1_000_000_000_000n : 1_000_000_000n;
+        if (lamports <= 0n || lamports > maximumLamports) throw new Error(`Send between 0 and ${fundingFaucet ? "1000" : "1"} test SOL`);
         await waitForCampusSolanaTurn();
         const { value: latestBlockhash } = await solanaDevnetRpc.getLatestBlockhash().send();
         const instruction = getTransferSolInstruction({
@@ -2755,7 +2764,8 @@ export default function OnchainLab() {
                   <div className="send-target-mode"><button type="button" className={transferTargetMode === "username" ? "active" : ""} onClick={() => { setTransferTargetMode("username"); setTransferError(""); }}>Campus username</button><button type="button" className={transferTargetMode === "address" ? "active" : ""} onClick={() => { setTransferTargetMode("address"); setRecipient(null); setRecipientSuggestions([]); setTransferError(""); }}>Wallet address</button></div>
                   {transferTargetMode === "username" ? <label className="send-recipient">Recipient<div><span>@</span><input value={recipientName.replace(/^@/, "")} onChange={(event) => { setRecipientName(event.target.value); setRecipient(null); setTransferReceipt(null); setTransferStatus("idle"); setTransferError(""); }} placeholder="Start typing a name" autoComplete="off" /></div>{recipientSuggestions.length > 0 && <aside>{recipientSuggestions.map((suggestion) => <button type="button" key={suggestion.username} onClick={() => void resolveCampusRecipient(suggestion.username)}><span>{suggestion.displayName.slice(0, 2).toUpperCase()}</span><b>@{suggestion.username}</b><small>{suggestion.displayName}</small></button>)}</aside>}{recipient && <em>✓ {recipient.username} · {shortenAddress(recipient.wallets.find((item) => item.chain === (transferNetwork === "solana" ? "solana" : "ethereum"))?.address ?? "")}</em>}</label> : <label>Wallet address<input value={directRecipientAddress} onChange={(event) => { setDirectRecipientAddress(event.target.value); setTransferReceipt(null); setTransferError(""); }} placeholder={transferNetwork === "solana" ? "Solana address" : "0x… address"} autoComplete="off" /></label>}
                   <label>Amount<div className="send-amount"><input inputMode="decimal" value={transferAmount} onChange={(event) => { setTransferAmount(event.target.value); setTransferError(""); }} placeholder={transferNetwork === "solana" ? "0.01" : "0.001"} /><span>{transferNetwork === "solana" ? "SOL" : "ETH"}</span></div></label>
-                  <button className="send-submit" disabled={transferStatus === "sending" || (transferTargetMode === "username" && !recipient ? !recipientName.trim() : !transferAmount || (transferTargetMode === "address" && !directRecipientAddress))}>{transferStatus === "sending" ? "Check your wallet…" : transferTargetMode === "username" && !recipient ? "Find student →" : "Review & send →"}</button>
+                  {fundingFaucet && <div className="faucet-funding-note">✓ Faucet distributor recognised. Owner funding limit enabled for this transfer.</div>}
+                  <button className="send-submit" disabled={transferStatus === "sending" || (transferTargetMode === "username" && !recipient ? !recipientName.trim() : !transferAmount || (transferTargetMode === "address" && !directRecipientAddress))}>{transferStatus === "sending" ? "Check your wallet…" : transferTargetMode === "username" && !recipient ? "Find student →" : fundingFaucet ? "Review faucet funding →" : "Review & send →"}</button>
                 </form>
                 {transferError && <div className="transfer-message error">{transferError}</div>}
                 {transferReceipt && <div className="transfer-message success"><span>✓</span><div><b>Sent to {transferReceipt.recipient}</b><small>{transferReceipt.amount} {faucetNetworkMeta[transferReceipt.chain].asset}</small></div><a href={transferReceipt.explorer} target="_blank" rel="noreferrer">Receipt ↗</a></div>}

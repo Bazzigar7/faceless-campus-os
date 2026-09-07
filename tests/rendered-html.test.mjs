@@ -566,6 +566,9 @@ test("Robinhood faucet hands test ETH from Campus to Rabby for Vibevibe", async 
   assert.match(admin, /eq\(wallets\.userId, student\.id\)/);
   assert.match(client, /Your wallet controls the treasury/);
   assert.match(client, /Move to my wallet/);
+  assert.match(client, /Faucet distributor recognised/);
+  assert.match(client, /Review faucet funding/);
+  assert.match(client, /fundingFaucet \? "10"/);
   assert.match(faucet, /treasuryAddress/);
   assert.match(faucet, /where\(eq\(faucetConfigs\.chain, "robinhood"\)\)/);
   assert.match(signer, /input\.chain === "robinhood" \? 46630 : 11155111/);

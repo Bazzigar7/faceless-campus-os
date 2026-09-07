@@ -36,8 +36,8 @@ export async function POST(request: Request) {
     const [receipt, transaction] = await Promise.all([client.getTransactionReceipt({ hash: transactionHash as Hex }), client.getTransaction({ hash: transactionHash as Hex })]);
     let functionName = "";
     try { functionName = decodeFunctionData({ abi: buyAbi, data: transaction.input }).functionName; } catch { /* handled below */ }
-    const valid = receipt.status === "success" && transaction.from.toLowerCase() === walletAddress.toLowerCase() && transaction.to?.toLowerCase() === CURVE_ADDRESS && transaction.value >= parseEther("0.01") && transaction.value <= parseEther("0.05") && functionName === "buy";
-    if (!valid) return Response.json({ error: "The transaction must be a 0.01–0.05 test ETH buy of the campaign token" }, { status: 400 });
+    const valid = receipt.status === "success" && transaction.from.toLowerCase() === walletAddress.toLowerCase() && transaction.to?.toLowerCase() === CURVE_ADDRESS && transaction.value >= parseEther("0.004") && transaction.value <= parseEther("0.05") && functionName === "buy";
+    if (!valid) return Response.json({ error: "The transaction must be a 0.004–0.05 test ETH buy of the campaign token" }, { status: 400 });
     await db.insert(xpProofs).values({ id: crypto.randomUUID(), userId: student.id, missionKey: MISSION_KEY, missionType: "campaign_buy", chain: "robinhood", walletAddress, transactionHash, xpAmount: XP_AMOUNT, status: "verified" }).onConflictDoNothing();
     const [saved] = await db.select().from(xpProofs).where(and(eq(xpProofs.userId, student.id), eq(xpProofs.missionKey, MISSION_KEY))).limit(1);
     return Response.json({ proof: saved, xpAmount: XP_AMOUNT });

@@ -91,6 +91,8 @@ test("profile registration verifies signed Privy identity data", async () => {
   assert.match(verifier, /linked_accounts/);
   assert.match(client, /useIdentityToken/);
   assert.match(client, /campus_pending_username/);
+  assert.match(client, /const \[username, setUsername\] = useState\(""\)/);
+  assert.doesNotMatch(client, /useState\("aanya"\)/);
   assert.match(client, /useSendEthereumTransaction/);
   assert.match(client, /useSignAndSendTransaction/);
   assert.match(client, /api\/resolve/);
@@ -303,15 +305,15 @@ test("first Vibevibe buy is wallet-approved, verified onchain and shown in holdi
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
   ]);
   assert.match(client, /Buy your first token/);
-  assert.match(client, /0\.01–0\.05 test ETH/);
+  assert.match(client, /0\.004–0\.05 test ETH/);
   assert.match(client, /Or enter an amount/);
-  assert.match(client, /min="0\.01" max="0\.05"/);
+  assert.match(client, /min="0\.004" max="0\.05"/);
   assert.match(client, /\/partners\/mask-campaign\.png/);
   assert.match(client, /\$MASK/);
   assert.match(client, /buyVibevibeToken/);
   assert.match(client, /vibevibeMaskBalance/);
   assert.match(route, /campaign:vibevibe:first-buy/);
-  assert.match(route, /transaction\.value >= parseEther\("0\.01"\)/);
+  assert.match(route, /transaction\.value >= parseEther\("0\.004"\)/);
   assert.match(route, /transaction\.value <= parseEther\("0\.05"\)/);
   assert.match(route, /functionName === "buy"/);
   assert.match(league, /First Token Buyer/);

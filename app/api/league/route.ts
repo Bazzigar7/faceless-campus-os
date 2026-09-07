@@ -46,6 +46,7 @@ export async function GET(request: Request) {
     const recordFor = (userId: string) => {
       const breakdown = {
         lessons: xpProofRows.filter((row) => row.userId === userId && row.status === "verified" && row.missionType === "lesson").length,
+        firstTokenBuyXp: xpProofRows.filter((row) => row.userId === userId && row.status === "verified" && row.missionType === "campaign_buy").reduce((total, row) => total + row.xpAmount, 0),
         liveQuests: sessionRows.filter((row) => row.userId === userId && row.status === "completed").length,
         faucetClaims: faucetRows.filter((row) => row.userId === userId && row.status === "sent").length,
         tokenTransfers: transferRows.filter((row) => row.fromUserId === userId).length,
@@ -58,8 +59,8 @@ export async function GET(request: Request) {
         airdrops: airdropRows.filter((row) => row.userId === userId && row.status === "sent").length,
         verifiedProjects: projectRows.filter((row) => row.status === "verified" && (row.userId === userId || projectMemberRows.some((member) => member.projectId === row.id && member.userId === userId && member.status === "accepted"))).length,
       };
-      const xp = Math.min(breakdown.lessons, caps.lesson) * points.lesson + Math.min(breakdown.liveQuests, caps.liveQuest) * points.liveQuest + Math.min(breakdown.faucetClaims, caps.faucet) * points.faucet + Math.min(breakdown.tokenTransfers, caps.transfer) * points.transfer + Math.min(breakdown.nftMints, caps.nft) * points.nft + Math.min(breakdown.tokenLaunches, caps.token) * points.token + Math.min(breakdown.rwaTrades, caps.rwa) * points.rwa + Math.min(breakdown.campaigns, caps.campaign) * points.campaign + breakdown.dailyTradingXp + Math.min(breakdown.partnerDrops, caps.partnerDrop) * points.partnerDrop + Math.min(breakdown.airdrops, caps.airdrop) * points.airdrop + Math.min(breakdown.verifiedProjects, caps.verifiedProject) * points.verifiedProject;
-      const badges = [breakdown.lessons >= 1 && "Lesson Starter", breakdown.liveQuests >= 1 && "Live Quest", breakdown.tokenTransfers >= 1 && "Token Sender", breakdown.nftMints >= 1 && "NFT Collector", breakdown.tokenLaunches >= 1 && "Token Launcher", breakdown.rwaTrades >= 1 && "RWA Analyst", breakdown.campaigns >= 1 && "Creator Earned", breakdown.dailyTradingXp >= points.dailyTrade && "Daily Trader", breakdown.partnerDrops >= 1 && "Partner Proof", breakdown.verifiedProjects >= 1 && "Verified Builder"].filter(Boolean) as string[];
+      const xp = Math.min(breakdown.lessons, caps.lesson) * points.lesson + breakdown.firstTokenBuyXp + Math.min(breakdown.liveQuests, caps.liveQuest) * points.liveQuest + Math.min(breakdown.faucetClaims, caps.faucet) * points.faucet + Math.min(breakdown.tokenTransfers, caps.transfer) * points.transfer + Math.min(breakdown.nftMints, caps.nft) * points.nft + Math.min(breakdown.tokenLaunches, caps.token) * points.token + Math.min(breakdown.rwaTrades, caps.rwa) * points.rwa + Math.min(breakdown.campaigns, caps.campaign) * points.campaign + breakdown.dailyTradingXp + Math.min(breakdown.partnerDrops, caps.partnerDrop) * points.partnerDrop + Math.min(breakdown.airdrops, caps.airdrop) * points.airdrop + Math.min(breakdown.verifiedProjects, caps.verifiedProject) * points.verifiedProject;
+      const badges = [breakdown.lessons >= 1 && "Lesson Starter", breakdown.firstTokenBuyXp > 0 && "First Token Buyer", breakdown.liveQuests >= 1 && "Live Quest", breakdown.tokenTransfers >= 1 && "Token Sender", breakdown.nftMints >= 1 && "NFT Collector", breakdown.tokenLaunches >= 1 && "Token Launcher", breakdown.rwaTrades >= 1 && "RWA Analyst", breakdown.campaigns >= 1 && "Creator Earned", breakdown.dailyTradingXp >= points.dailyTrade && "Daily Trader", breakdown.partnerDrops >= 1 && "Partner Proof", breakdown.verifiedProjects >= 1 && "Verified Builder"].filter(Boolean) as string[];
       return { xp, breakdown, badges, ...levelFor(xp) };
     };
     const ownMembership = memberRows.find((member) => member.userId === student.id);
@@ -70,6 +71,7 @@ export async function GET(request: Request) {
     const tradedToday = dailyTradeRows.some((row) => row.userId === student.id && row.status === "verified" && row.dayKey === campusDayKey());
     const missions = [
       { id: "lesson", title: "Complete a lesson + sign the proof", xp: points.lesson, done: own.breakdown.lessons > 0, destination: "learn" },
+      { id: "first_buy", title: "Buy your first testnet token", xp: 50, done: own.breakdown.firstTokenBuyXp > 0, destination: "campaigns" },
       { id: "quest", title: "Verify a live class quest", xp: points.liveQuest, done: own.breakdown.liveQuests > 0, destination: "home" },
       { id: "transfer", title: "Send a classroom token", xp: points.transfer, done: own.breakdown.tokenTransfers > 0, destination: "market" },
       { id: "nft", title: "Mint a testnet NFT", xp: points.nft, done: own.breakdown.nftMints > 0, destination: "market" },

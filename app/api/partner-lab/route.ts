@@ -20,10 +20,10 @@ const campaign = {
   teamSize: 5,
   fixedSupply: "1,000,000,000",
   launchCostEth: "0.0005",
-  raiseTargetEth: "0.005",
-  tradingFeePercent: 1,
+  raiseTargetEth: "5",
+  tradingFeePercent: 1.25,
   reward: "Partner reward for the livestreamed pressure-test cohort",
-  mechanicsStatus: "Complete the 0.005 test ETH bonding curve, then record the separate graduation transaction.",
+  mechanicsStatus: "Complete the 5 test ETH bonding curve, then record the separate graduation transaction.",
 };
 
 function campusDayKey(date = new Date()) {

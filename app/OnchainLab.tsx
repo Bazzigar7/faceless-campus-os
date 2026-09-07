@@ -25,7 +25,7 @@ import { create as createCoreAsset, createCollection as createCoreCollection, fe
 import { create as createCoreCandyMachine, mintV1 as mintCoreCandyMachine, mplCandyMachine } from "@metaplex-foundation/mpl-core-candy-machine";
 import { createNoopSigner as createUmiNoopSigner, generateSigner, none, publicKey, signerIdentity, sol, some } from "@metaplex-foundation/umi";
 import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
-import { createPublicClient, encodeFunctionData, http, isAddress, parseEther, stringToHex, type Hex } from "viem";
+import { createPublicClient, encodeFunctionData, formatUnits, http, isAddress, parseEther, stringToHex, type Hex } from "viem";
 import { sepolia } from "viem/chains";
 import LiveMask from "./LiveMask";
 
@@ -55,7 +55,7 @@ type LearningState = {
   resume: LearningRecord | null;
   cohort?: { activeStudents: number; lessonsCompleted: number; lessonsInProgress: number; completionRate: number; courses: Array<{ course: Course; completed: number }> };
 };
-type XpProof = { id: string; missionKey: string; missionType: "lesson"; chain: "ethereum"; transactionHash: string; xpAmount: number; status: "verified"; createdAt: string };
+type XpProof = { id: string; missionKey: string; missionType: "lesson" | "campaign_buy"; chain: "ethereum" | "robinhood"; transactionHash: string; xpAmount: number; status: "verified"; createdAt: string };
 type MaskCitation = { title: string; url: string };
 type LaunchDraft = {
   assetType: "nft_collection" | "token";
@@ -216,7 +216,7 @@ type PartnerLabState = { role: "student" | "educator" | "owner"; ownUserId: stri
 type PartnerReward = { kind: "credential" | "token_airdrop" | "nft_mint"; id: string | null; tokenId: string | null; label: string; chain: Chain | null; status: string };
 type PartnerDrop = { id: string; title: string; host: string; description: string; rewardLabel: string; rewardKind: PartnerReward["kind"]; rewardAssetId: string | null; reward: PartnerReward | null; eligibility: "open" | "attendance" | "live_quest" | "lesson" | "campaign"; eligibilityRef: string | null; maxClaims: number; status: "draft" | "live" | "closed"; claimedCount: number; ownClaim: { id: string; evidence: string; claimedAt: string } | null };
 type DropState = { role: "student" | "educator" | "owner"; drops: PartnerDrop[]; credentials: Array<{ id: string; evidence: string; claimedAt: string; drop: PartnerDrop | null }>; rewardOptions: { tokenAirdrops: Array<{ id: string; label: string; tokenId: string; chain: Chain }>; collections: Array<{ id: string; label: string; chain: Chain }> } };
-type LeagueBreakdown = { lessons: number; liveQuests: number; faucetClaims: number; tokenTransfers: number; nftMints: number; tokenLaunches: number; rwaTrades: number; campaigns: number; dailyTradingXp: number; partnerDrops: number; airdrops: number; verifiedProjects: number };
+type LeagueBreakdown = { lessons: number; firstTokenBuyXp: number; liveQuests: number; faucetClaims: number; tokenTransfers: number; nftMints: number; tokenLaunches: number; rwaTrades: number; campaigns: number; dailyTradingXp: number; partnerDrops: number; airdrops: number; verifiedProjects: number };
 type LeaguePlayer = { id: string; username: string; displayName: string; xp: number; rank: number; level: number; name: string; nextAt: number; badges: string[]; breakdown: LeagueBreakdown };
 type LeagueState = { own: Omit<LeaguePlayer, "id" | "username" | "displayName" | "rank"> & { rank: number | null }; leaderboard: LeaguePlayer[]; missions: Array<{ id: string; title: string; xp: number; done: boolean; destination: Tab }>; scoring: Record<string, number> };
 type CreatorFormat = "on_camera" | "faceless" | "voiceover" | "hands_only" | "screen_recording";
@@ -390,6 +390,13 @@ function identityTokenExpiresSoon(token: string, leewaySeconds = 30) {
 const solanaDevnetRpc = createSolanaRpc("/api/solana-rpc");
 const sepoliaPublicClient = createPublicClient({ chain: sepolia, transport: http() });
 const robinhoodPublicClient = createPublicClient({ transport: http("https://rpc.testnet.chain.robinhood.com") });
+const vibevibeTokenAddress = "0x4ac91bbf73Cc319507D0BDf3809a4979F32cc6da" as const;
+const vibevibeCurveAddress = "0xfc714dd49efb926b9028df23916bfba94f1abd2d" as const;
+const vibevibeCurveAbi = [
+  { type: "function", name: "quoteBuy", stateMutability: "view", inputs: [{ name: "grossEth", type: "uint256" }], outputs: [{ name: "tokenAmount", type: "uint256" }, { name: "grossEthUsed", type: "uint256" }, { name: "curveQuote", type: "uint256" }, { name: "totalFee", type: "uint256" }, { name: "refund", type: "uint256" }] },
+  { type: "function", name: "buy", stateMutability: "payable", inputs: [{ name: "minTokensOut", type: "uint256" }, { name: "deadline", type: "uint256" }], outputs: [{ name: "tokenAmount", type: "uint256" }] },
+] as const;
+const vibevibeTokenAbi = [{ type: "function", name: "balanceOf", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ name: "", type: "uint256" }] }] as const;
 const campusEditionMintAbi = [{
   type: "function",
   name: "mint",
@@ -515,6 +522,13 @@ export default function OnchainLab() {
   const [campaignBusy, setCampaignBusy] = useState<string | null>(null);
   const [campaignSubmitId, setCampaignSubmitId] = useState<string | null>(null);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null);
+  const [vibevibeBuyAmount, setVibevibeBuyAmount] = useState("0.01");
+  const [vibevibeQuote, setVibevibeQuote] = useState<bigint | null>(null);
+  const [vibevibeMaskBalance, setVibevibeMaskBalance] = useState(0n);
+  const [vibevibeFirstBuy, setVibevibeFirstBuy] = useState<XpProof | null>(null);
+  const [vibevibeTermsAccepted, setVibevibeTermsAccepted] = useState(false);
+  const [vibevibeBuyStatus, setVibevibeBuyStatus] = useState<"idle" | "quoting" | "buying" | "verified" | "error">("idle");
+  const [vibevibeBuyError, setVibevibeBuyError] = useState("");
   const [campaignView, setCampaignView] = useState<"all" | "product_testing" | "clipping" | "ugc">("all");
   const [campaignContentUrl, setCampaignContentUrl] = useState("");
   const [campaignDraft, setCampaignDraft] = useState({ brand: "", title: "", brief: "", campaignType: "creator" as CampusCampaign["campaignType"], platform: "Instagram", spots: "50", rewardAmount: "500", rewardCurrency: "INR" });
@@ -687,6 +701,7 @@ export default function OnchainLab() {
     void loadClassroomSession();
     void loadCampaigns();
     void loadPartnerLab();
+    void loadVibevibeCampaign();
     void loadDrops();
     void loadLeague();
     void loadCreatorProjects();
@@ -730,6 +745,11 @@ export default function OnchainLab() {
     if (active !== "market" || marketCollections.length || marketLoading) return;
     void loadMarket();
   }, [active, marketCollections.length, marketLoading]);
+
+  useEffect(() => {
+    if (!authenticated || !ethereumWallet || (active !== "campaigns" && active !== "wallet")) return;
+    void loadVibevibeCampaign();
+  }, [active, authenticated, ethereumWallet?.address, vibevibeBuyAmount]);
 
   useEffect(() => {
     if (active !== "market" || marketArea !== "rwas" || !identityToken || rwaState || rwaBusy) return;
@@ -912,6 +932,54 @@ export default function OnchainLab() {
     const requestToken = await campusIdentityToken(); if (!requestToken) return;
     setLeagueLoading(true);
     try { const response = await fetch("/api/league", { headers: { "privy-id-token": requestToken } }); const result = await response.json() as LeagueState & { error?: string }; if (!response.ok) throw new Error(result.error ?? "Campus League is unavailable"); setLeagueState(result); } catch (error) { notify(error instanceof Error ? error.message : "Campus League is unavailable"); } finally { setLeagueLoading(false); }
+  }
+
+  async function loadVibevibeCampaign() {
+    if (!ethereumWallet) return;
+    try {
+      const [holding, quote, requestToken] = await Promise.all([
+        robinhoodPublicClient.readContract({ address: vibevibeTokenAddress, abi: vibevibeTokenAbi, functionName: "balanceOf", args: [ethereumWallet.address as Hex] }),
+        robinhoodPublicClient.readContract({ address: vibevibeCurveAddress, abi: vibevibeCurveAbi, functionName: "quoteBuy", args: [parseEther(vibevibeBuyAmount)] }),
+        campusIdentityToken(),
+      ]);
+      setVibevibeMaskBalance(holding);
+      setVibevibeQuote(quote[0]);
+      if (requestToken) {
+        const response = await fetch("/api/vibevibe", { headers: { "privy-id-token": requestToken } });
+        const result = await response.json() as { proof?: XpProof | null };
+        if (response.ok) setVibevibeFirstBuy(result.proof ?? null);
+      }
+    } catch (error) {
+      if (selectedCampaignId === "partner:vibevibe-buy") setVibevibeBuyError(error instanceof Error ? error.message : "Vibevibe is temporarily unavailable");
+    }
+  }
+
+  async function buyVibevibeToken() {
+    if (!ethereumWallet) return setVibevibeBuyError("Your Campus Ethereum wallet is unavailable");
+    if (!vibevibeTermsAccepted) return setVibevibeBuyError("Confirm the testnet notice before buying");
+    const requestToken = await campusIdentityToken();
+    if (!requestToken) return setVibevibeBuyError("Sign in again before buying");
+    setVibevibeBuyStatus("buying"); setVibevibeBuyError("");
+    try {
+      const value = parseEther(vibevibeBuyAmount);
+      if (value < parseEther("0.01") || value > parseEther("0.05")) throw new Error("Choose 0.01–0.05 test ETH");
+      const quote = await robinhoodPublicClient.readContract({ address: vibevibeCurveAddress, abi: vibevibeCurveAbi, functionName: "quoteBuy", args: [value] });
+      const minTokensOut = quote[0] * 99n / 100n;
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 120);
+      const data = encodeFunctionData({ abi: vibevibeCurveAbi, functionName: "buy", args: [minTokensOut, deadline] });
+      await ethereumWallet.switchChain(46630);
+      const { hash } = await sendEthereumTransaction({ to: vibevibeCurveAddress, data, value, chainId: 46630 }, { address: ethereumWallet.address, uiOptions: { showWalletUIs: true } });
+      const receipt = await robinhoodPublicClient.waitForTransactionReceipt({ hash: hash as Hex });
+      if (receipt.status !== "success") throw new Error("The Robinhood testnet purchase did not complete");
+      const response = await fetch("/api/vibevibe", { method: "POST", headers: { "content-type": "application/json", "privy-id-token": requestToken }, body: JSON.stringify({ walletAddress: ethereumWallet.address, transactionHash: hash }) });
+      const result = await response.json() as { proof?: XpProof; error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Campus could not verify the purchase");
+      setVibevibeFirstBuy(result.proof ?? null); setVibevibeBuyStatus("verified");
+      await Promise.all([loadVibevibeCampaign(), loadLeague(), refreshBalances()]);
+      notify("First token purchase verified · +50 XP");
+    } catch (error) {
+      setVibevibeBuyStatus("error"); setVibevibeBuyError(error instanceof Error ? error.message : "The purchase was not completed");
+    }
   }
 
   async function loadCreatorProjects() {
@@ -2838,11 +2906,12 @@ export default function OnchainLab() {
                   {(walletAssetView === "overall" || walletAssetView === "ethereum") && <article><span className="chain-coin eth">Ξ</span><div><small>ETHEREUM · SEPOLIA</small><b>{balance.toFixed(4)} ETH</b><strong>{usdPrices ? `≈ ${formatUsd(balance * usdPrices.ethereum)}` : "USD reference unavailable"}</strong><em>Reference only · test token</em></div><a href={`https://sepolia.etherscan.io/address/${ethWalletAddress}`} target="_blank" rel="noreferrer">Explorer ↗</a></article>}
                   {(walletAssetView === "overall" || walletAssetView === "solana") && <article><span className="chain-coin sol">S</span><div><small>SOLANA · DEVNET</small><b>{solBalance.toFixed(3)} SOL</b><strong>{usdPrices ? `≈ ${formatUsd(solBalance * usdPrices.solana)}` : "USD reference unavailable"}</strong><em>Reference only · test token</em></div><a href={`https://explorer.solana.com/address/${solWalletAddress}?cluster=devnet`} target="_blank" rel="noreferrer">Explorer ↗</a></article>}
                   {(walletAssetView === "overall" || walletAssetView === "robinhood") && <article><span className="chain-coin rh">R</span><div><small>ROBINHOOD CHAIN · TESTNET</small><b>{robinhoodBalance.toFixed(4)} ETH</b><strong>{usdPrices ? `≈ ${formatUsd(robinhoodBalance * usdPrices.ethereum)}` : "USD reference unavailable"}</strong><em>Reference only · test token</em></div><a href={`https://explorer.testnet.chain.robinhood.com/address/${ethWalletAddress}`} target="_blank" rel="noreferrer">Explorer ↗</a></article>}
+                  {(walletAssetView === "overall" || walletAssetView === "robinhood") && vibevibeMaskBalance > 0n && <article><span className="chain-coin rh">MA</span><div><small>VIBEVIBE · ROBINHOOD TESTNET</small><b>{Number(formatUnits(vibevibeMaskBalance, 18)).toLocaleString(undefined, { maximumFractionDigits: 4 })} MASK</b><strong>Faceless · campaign token</strong><em>Testnet token · no monetary value</em></div><a href={`https://explorer.testnet.chain.robinhood.com/address/${vibevibeTokenAddress}`} target="_blank" rel="noreferrer">Token ↗</a></article>}
                   {visibleWalletTokens.map((token) => <article key={token.id}><span className={`chain-coin ${token.chain === "ethereum" ? "eth" : "sol"}`}>{token.symbol.slice(0, 2)}</span><div><small>{token.standard.toUpperCase()} · {token.chain === "ethereum" ? "SEPOLIA" : "SOLANA DEVNET"}</small><b>{Number(token.owned).toLocaleString()} {token.symbol}</b><strong>Campus token · no USD value</strong><em>{token.authorityMode === "revoke" ? "Fixed supply" : "Creator mint authority active"}</em></div><button onClick={() => { setSelectedTokenId(token.id); setMarketArea("tokens"); setActive("market"); }}>Send →</button></article>)}
                 </div>
                 <div className="wallet-nft-area">
                   <div className="wallet-nft-title"><b>NFTs</b><small>{visibleWalletNfts.length} item{visibleWalletNfts.length === 1 ? "" : "s"}</small></div>
-                  {walletAssetsLoading && walletNfts.length === 0 ? <div className="wallet-assets-empty">Reading your holdings…</div> : walletAssetsError ? <div className="wallet-assets-empty error">{walletAssetsError}</div> : visibleWalletNfts.length ? <div className="wallet-nft-grid">{visibleWalletNfts.map((asset) => <article key={asset.id} className="wallet-nft-card"><img src={asset.image} alt={asset.name} /><div><span><small>{asset.standard} · {asset.network === "sepolia" ? "SEPOLIA" : "SOLANA DEVNET"}</small><b>{asset.name}</b><em>{asset.quantity} owned · edition supply {asset.maxSupply}</em></span><div>{asset.contractAddress && <a href={asset.chain === "ethereum" ? `https://sepolia.etherscan.io/address/${asset.contractAddress}` : `https://core.metaplex.com/explorer/${asset.contractAddress}?env=devnet`} target="_blank" rel="noreferrer">{asset.chain === "ethereum" ? "Contract" : "Collection"} ↗</a>}{asset.assetAddress && <a href={`https://core.metaplex.com/explorer/${asset.assetAddress}?env=devnet`} target="_blank" rel="noreferrer">NFT ↗</a>}{asset.mintTransactionHash && <a href={asset.chain === "ethereum" ? `https://sepolia.etherscan.io/tx/${asset.mintTransactionHash}` : `https://explorer.solana.com/tx/${asset.mintTransactionHash}?cluster=devnet`} target="_blank" rel="noreferrer">Mint receipt ↗</a>}<a href={asset.metadata} target="_blank" rel="noreferrer">Metadata ↗</a></div></div></article>)}</div> : <div className="wallet-assets-empty"><b>No items on this network yet.</b><span>{walletAssetView === "robinhood" ? "Vibevibe tokens will be indexed here after the campaign connector is added." : "Launch or receive a testnet asset and it will appear here."}</span></div>}
+                  {walletAssetsLoading && walletNfts.length === 0 ? <div className="wallet-assets-empty">Reading your holdings…</div> : walletAssetsError ? <div className="wallet-assets-empty error">{walletAssetsError}</div> : visibleWalletNfts.length ? <div className="wallet-nft-grid">{visibleWalletNfts.map((asset) => <article key={asset.id} className="wallet-nft-card"><img src={asset.image} alt={asset.name} /><div><span><small>{asset.standard} · {asset.network === "sepolia" ? "SEPOLIA" : "SOLANA DEVNET"}</small><b>{asset.name}</b><em>{asset.quantity} owned · edition supply {asset.maxSupply}</em></span><div>{asset.contractAddress && <a href={asset.chain === "ethereum" ? `https://sepolia.etherscan.io/address/${asset.contractAddress}` : `https://core.metaplex.com/explorer/${asset.contractAddress}?env=devnet`} target="_blank" rel="noreferrer">{asset.chain === "ethereum" ? "Contract" : "Collection"} ↗</a>}{asset.assetAddress && <a href={`https://core.metaplex.com/explorer/${asset.assetAddress}?env=devnet`} target="_blank" rel="noreferrer">NFT ↗</a>}{asset.mintTransactionHash && <a href={asset.chain === "ethereum" ? `https://sepolia.etherscan.io/tx/${asset.mintTransactionHash}` : `https://explorer.solana.com/tx/${asset.mintTransactionHash}?cluster=devnet`} target="_blank" rel="noreferrer">Mint receipt ↗</a>}<a href={asset.metadata} target="_blank" rel="noreferrer">Metadata ↗</a></div></div></article>)}</div> : <div className="wallet-assets-empty"><b>No NFTs on this network yet.</b><span>Mint or receive a testnet NFT and it will appear here.</span></div>}
                 </div>
               </section>
             </div>
@@ -2929,8 +2998,9 @@ export default function OnchainLab() {
             <div className="page-stack">
               {selectedCampaignId === null && <section className="campaign-vibe-browser">
                 <nav className="campaign-category-tabs" aria-label="Campaign types"><button className={campaignView === "all" ? "active" : ""} onClick={() => setCampaignView("all")}>All campaigns</button><button className={campaignView === "product_testing" ? "active" : ""} onClick={() => setCampaignView("product_testing")}>Product testing</button><button className={campaignView === "clipping" ? "active" : ""} onClick={() => setCampaignView("clipping")}>Clipping</button><button className={campaignView === "ugc" ? "active" : ""} onClick={() => setCampaignView("ugc")}>UGC</button></nav>
-                {(campaignView === "all" || campaignView === "product_testing") ? <div className="campaign-vibe-grid single-campaign-grid"><article className="campaign-vibe-card partner"><div className="campaign-vibe-art vibevibe-art"><img className="vibevibe-logo-gif" src="/partners/vibevibe-logo.gif" alt="Animated Vibevibe logo" /><span>LIVE TESTNET</span></div><div className="campaign-vibe-copy"><header><span>VIBEVIBE · PRODUCT TESTING</span><em>LIVE</em></header><h3>Launch your first token</h3><p>Form a five-person team, launch a Faceless character token and pressure-test a live launchpad.</p><div className="campaign-vibe-rewards"><span><small>GROUP MISSION</small><b>+100 XP</b></span><span><small>DAILY TRADES</small><b>+50 XP</b></span><span><small>PARTNER REWARD</small><b>Airdrop</b></span></div><button onClick={() => setSelectedCampaignId("partner:vibevibe")}>Open campaign →</button></div></article></div> : <div className="campaign-empty-state"><span>{campaignView === "clipping" ? "CLIPPING" : "UGC"}</span><h3>New campaigns will appear here.</h3><p>When a partner campaign goes live, you’ll see the brief, rewards and submission steps in one place.</p></div>}
+                {(campaignView === "all" || campaignView === "product_testing") ? <div className="campaign-vibe-grid single-campaign-grid vibevibe-campaign-pair"><article className="campaign-vibe-card partner"><div className="campaign-vibe-art vibevibe-art"><img className="vibevibe-logo-gif" src="/partners/vibevibe-logo.gif" alt="Animated Vibevibe logo" /><span>MISSION 01 · LIVE</span></div><div className="campaign-vibe-copy"><header><span>VIBEVIBE · PRODUCT TESTING</span><em>{vibevibeFirstBuy ? "DONE ✓" : "LIVE"}</em></header><h3>Buy your first token</h3><p>Buy MASK with 0.01–0.05 test ETH. Campus verifies the purchase and adds it to your holdings.</p><div className="campaign-vibe-rewards"><span><small>REWARD</small><b>+50 XP</b></span><span><small>NETWORK</small><b>Robinhood</b></span><span><small>ASSET</small><b>MASK</b></span></div><button onClick={() => setSelectedCampaignId("partner:vibevibe-buy")}>{vibevibeFirstBuy ? "View completed mission →" : "Buy your first token →"}</button></div></article><article className="campaign-vibe-card partner"><div className="campaign-vibe-art vibevibe-art"><img className="vibevibe-logo-gif" src="/partners/vibevibe-logo.gif" alt="Animated Vibevibe logo" /><span>MISSION 02 · LIVE</span></div><div className="campaign-vibe-copy"><header><span>VIBEVIBE · PRODUCT TESTING</span><em>LIVE</em></header><h3>Launch your own token</h3><p>Form a five-person team, launch a Faceless character token and pressure-test a live launchpad.</p><div className="campaign-vibe-rewards"><span><small>GROUP MISSION</small><b>+100 XP</b></span><span><small>DAILY TRADES</small><b>+50 XP</b></span><span><small>PARTNER REWARD</small><b>Airdrop</b></span></div><button onClick={() => setSelectedCampaignId("partner:vibevibe")}>Open campaign →</button></div></article></div> : <div className="campaign-empty-state"><span>{campaignView === "clipping" ? "CLIPPING" : "UGC"}</span><h3>New campaigns will appear here.</h3><p>When a partner campaign goes live, you’ll see the brief, rewards and submission steps in one place.</p></div>}
               </section>}
+              {selectedCampaignId === "partner:vibevibe-buy" && <section className="vibevibe-buy-campaign"><button className="build-back" onClick={() => setSelectedCampaignId(null)}>← Back to Campaigns</button><article className="vibevibe-buy-panel"><header><div><span>MISSION 01 · ROBINHOOD TESTNET</span><h2>{vibevibeFirstBuy ? "Your first token is in your wallet." : "Buy your first token."}</h2><p>{vibevibeFirstBuy ? "Campus verified the purchase and awarded your XP." : "Choose an amount, approve it in your Campus wallet, and Campus will verify everything onchain."}</p></div><img src="/partners/vibevibe-logo.gif" alt="Vibevibe" /></header>{vibevibeFirstBuy ? <div className="vibevibe-buy-complete"><span>✓</span><div><b>+50 XP earned</b><small>{formatUnits(vibevibeMaskBalance, 18)} MASK in your Robinhood holdings</small></div><a href={`https://explorer.testnet.chain.robinhood.com/tx/${vibevibeFirstBuy.transactionHash}`} target="_blank" rel="noreferrer">View receipt ↗</a><button onClick={() => { setWalletAssetView("robinhood"); setActive("wallet"); }}>Open holdings →</button></div> : <div className="vibevibe-buy-body"><div><span className="eyebrow">CHOOSE YOUR PURCHASE</span><div className="vibevibe-amounts">{["0.01", "0.02", "0.03", "0.04", "0.05"].map((amount) => <button key={amount} className={vibevibeBuyAmount === amount ? "active" : ""} onClick={() => { setVibevibeBuyAmount(amount); setVibevibeBuyError(""); }}>{amount}<small>test ETH</small></button>)}</div><div className="vibevibe-quote"><span>You receive about</span><b>{vibevibeQuote === null ? "Loading…" : `${Number(formatUnits(vibevibeQuote, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} MASK`}</b><small>Live curve quote · 1% price protection</small></div></div><form onSubmit={(event) => { event.preventDefault(); void buyVibevibeToken(); }}><div><small>YOU PAY</small><b>{vibevibeBuyAmount} test ETH</b></div><label><input type="checkbox" checked={vibevibeTermsAccepted} onChange={(event) => setVibevibeTermsAccepted(event.target.checked)} /><span>I understand this is a third-party testnet purchase with no monetary value and an irreversible wallet transaction. I have read the <a href="https://testnet.vibevibe.fun/user-agreement" target="_blank" rel="noreferrer">Vibevibe terms ↗</a>.</span></label><button disabled={vibevibeBuyStatus === "buying" || !vibevibeTermsAccepted}>{vibevibeBuyStatus === "buying" ? "Check your wallet…" : `Buy MASK for ${vibevibeBuyAmount} test ETH →`}</button>{vibevibeBuyError && <p>{vibevibeBuyError}</p>}<small>Your Campus wallet gives the final approval. Campus never holds your funds.</small></form></div>}</article></section>}
               {selectedCampaignId === "partner:vibevibe" && <button className="build-back" onClick={() => setSelectedCampaignId(null)}>← Back to Campaigns</button>}<section className={selectedCampaignId === "partner:vibevibe" ? "partner-lab card" : "partner-lab card campaign-hidden"}>
                 <header className="partner-simple-hero"><div><span>LIVE TESTNET CAMPAIGN</span><h2>Launch your first token.</h2><p>Work in a team of five. Launch one Faceless character token, trade classmates’ tokens and earn verified XP.</p><div><a href="https://testnet.vibevibe.fun" target="_blank" rel="noreferrer">Open Vibevibe ↗</a><button onClick={() => setActive("wallet")}>Get test ETH</button></div></div><img className="partner-vibevibe-gif" src="/partners/vibevibe-logo.gif" alt="Animated Vibevibe logo" /></header>
                 <div className="partner-simple-rewards"><span><small>GROUP MISSION</small><b>+100 XP</b></span><span><small>DAILY TRADING</small><b>+50 XP</b></span><span><small>PARTNER REWARD</small><b>Airdrop</b></span></div>
@@ -2953,7 +3023,7 @@ export default function OnchainLab() {
                     {isLauncher && team.tokenName && !team.launchTxHash && <form className="partner-proof-form" onSubmit={(event) => { event.preventDefault(); void partnerLabAction("submit_launch", { teamId: team.id, tokenAddress: partnerProofDraft.tokenAddress, transactionHash: partnerProofDraft.transactionHash }); }}><div><b>Launcher proof</b><small>After the wallet confirms on Vibevibe, paste the token address and launch receipt.</small></div><label>Token address<input required value={partnerProofDraft.tokenAddress} onChange={(event) => setPartnerProofDraft((current) => ({ ...current, tokenAddress: event.target.value }))} placeholder="0x… token address" /></label><label>Launch transaction<input required value={partnerProofDraft.transactionHash} onChange={(event) => setPartnerProofDraft((current) => ({ ...current, transactionHash: event.target.value }))} placeholder="0x… transaction hash" /></label><button disabled={partnerLabBusy}>Save launch proof →</button></form>}
                     {team.tokenName && <div className="partner-token-brief"><span><small>CHARACTER PITCH</small><b>{team.tokenPitch}</b></span><span><small>INITIAL BUY</small><b>{team.initialBuyEth === "0" ? "None" : `${team.initialBuyEth} test ETH`}</b></span><span><small>AFTER BONDING</small><b>Permissionless graduation → Uniswap V4</b></span></div>}
                     {ownMember?.status === "accepted" && team.launchTxHash && <div className="partner-test-grid">{ownMember.role === "market_tester" && <form onSubmit={(event) => { event.preventDefault(); void partnerLabAction("submit_proof", { teamId: team.id, proofType: "buy", transactionHash: partnerProofDraft.transactionHash }); }}><b>Record your test buy</b><p>Buy once with a small testnet amount while the livestream community adds genuine volume.</p><input required value={partnerProofDraft.transactionHash} onChange={(event) => setPartnerProofDraft((current) => ({ ...current, transactionHash: event.target.value }))} placeholder="0x… buy transaction" /><button disabled={partnerLabBusy}>Save buy proof</button></form>}<form onSubmit={(event) => { event.preventDefault(); void partnerLabAction("submit_proof", { teamId: team.id, proofType: "sell", transactionHash: partnerProofDraft.transactionHash }); }}><b>Test the sell path</b><p>One teammate records a small sell so the group tests both sides of the curve.</p><input required value={partnerProofDraft.transactionHash} onChange={(event) => setPartnerProofDraft((current) => ({ ...current, transactionHash: event.target.value }))} placeholder="0x… sell transaction" /><button disabled={partnerLabBusy}>Save sell proof</button></form>{(isLauncher || partnerLabState.role === "owner") && !team.progress.graduated && <form onSubmit={(event) => { event.preventDefault(); void partnerLabAction("submit_graduation", { teamId: team.id, transactionHash: partnerProofDraft.transactionHash }); }}><b>Record graduation</b><p>100% bonded is not enough. Paste the separate permissionless graduation receipt.</p><input required value={partnerProofDraft.transactionHash} onChange={(event) => setPartnerProofDraft((current) => ({ ...current, transactionHash: event.target.value }))} placeholder="0x… graduation transaction" /><button disabled={partnerLabBusy}>Save graduation</button></form>}</div>}
-                    {team.launchTxHash && <div className="partner-bonding"><div><span><small>LIVE BONDING RACE</small><b>{(team.progress.curveProgressBps / 100).toFixed(1)}%</b></span><em>Target: 0.005 test ETH</em></div><progress max="10000" value={team.progress.curveProgressBps} /><p>Group buys + genuine testing-community volume move the curve. Avoid repetitive circular trades; the goal is useful product pressure, not artificial activity.</p>{partnerLabState.role === "owner" && <form onSubmit={(event) => { event.preventDefault(); void partnerLabAction("update_curve", { teamId: team.id, curveProgressPercent: partnerProofDraft.curveProgressPercent }); }}><input type="number" min="0" max="100" step="0.1" value={partnerProofDraft.curveProgressPercent} onChange={(event) => setPartnerProofDraft((current) => ({ ...current, curveProgressPercent: event.target.value }))} /><button disabled={partnerLabBusy}>Update live %</button></form>}</div>}
+                    {team.launchTxHash && <div className="partner-bonding"><div><span><small>LIVE BONDING RACE</small><b>{(team.progress.curveProgressBps / 100).toFixed(1)}%</b></span><em>Target: 5 test ETH</em></div><progress max="10000" value={team.progress.curveProgressBps} /><p>Group buys + genuine testing-community volume move the curve. Avoid repetitive circular trades; the goal is useful product pressure, not artificial activity.</p>{partnerLabState.role === "owner" && <form onSubmit={(event) => { event.preventDefault(); void partnerLabAction("update_curve", { teamId: team.id, curveProgressPercent: partnerProofDraft.curveProgressPercent }); }}><input type="number" min="0" max="100" step="0.1" value={partnerProofDraft.curveProgressPercent} onChange={(event) => setPartnerProofDraft((current) => ({ ...current, curveProgressPercent: event.target.value }))} /><button disabled={partnerLabBusy}>Update live %</button></form>}</div>}
                     {partnerLabState.role === "owner" && team.launchTxHash && !team.progress.feedbackSubmitted && <form className="partner-owner-feedback" onSubmit={(event) => { event.preventDefault(); void partnerLabAction("submit_feedback", { teamId: team.id, feedbackReference: partnerProofDraft.feedbackReference }); }}><div><b>Educator-only founder feedback</b><small>Collect student observations during the livestream, then submit the partner form yourself and save its link or confirmation here.</small></div><input required value={partnerProofDraft.feedbackReference} onChange={(event) => setPartnerProofDraft((current) => ({ ...current, feedbackReference: event.target.value }))} placeholder="Feedback form link or submission confirmation" /><button disabled={partnerLabBusy}>Mark feedback submitted →</button></form>}
                     <footer><div><span className={team.progress.launchProof ? "done" : ""}>Launch {team.progress.launchProof ? "✓" : "—"}</span><span className={team.progress.buyerProofs >= 4 ? "done" : ""}>Buyers {team.progress.buyerProofs}/4</span><span className={team.progress.sellProof ? "done" : ""}>Sell {team.progress.sellProof ? "✓" : "—"}</span><span className={team.progress.curveProgressBps >= 10000 ? "done" : ""}>Bonded {team.progress.curveProgressBps >= 10000 ? "✓" : `${(team.progress.curveProgressBps / 100).toFixed(0)}%`}</span><span className={team.progress.graduated ? "done" : ""}>Graduated {team.progress.graduated ? "✓" : "—"}</span><span className={team.progress.feedbackSubmitted ? "done" : ""}>Educator feedback {team.progress.feedbackSubmitted ? "✓" : "—"}</span></div><div>{team.tokenAddress && <a href={`https://explorer.testnet.chain.robinhood.com/address/${team.tokenAddress}`} target="_blank" rel="noreferrer">View token ↗</a>}{partnerLabState.role === "owner" && team.progress.readyForReview && team.status !== "verified" && <button disabled={partnerLabBusy} onClick={() => void partnerLabAction("verify_team", { teamId: team.id })}>Verify reward proof →</button>}</div></footer>
                   </article>;

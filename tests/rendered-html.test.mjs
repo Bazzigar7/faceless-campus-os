@@ -295,6 +295,25 @@ test("campaign engine persists missions, submissions and owner payment approval"
   assert.match(schema, /idx_submissions_campaign_user/);
 });
 
+test("first Vibevibe buy is wallet-approved, verified onchain and shown in holdings", async () => {
+  const [client, route, league, schema] = await Promise.all([
+    readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/vibevibe/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/league/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /Buy your first token/);
+  assert.match(client, /0\.01–0\.05 test ETH/);
+  assert.match(client, /buyVibevibeToken/);
+  assert.match(client, /vibevibeMaskBalance/);
+  assert.match(route, /campaign:vibevibe:first-buy/);
+  assert.match(route, /transaction\.value >= parseEther\("0\.01"\)/);
+  assert.match(route, /transaction\.value <= parseEther\("0\.05"\)/);
+  assert.match(route, /functionName === "buy"/);
+  assert.match(league, /First Token Buyer/);
+  assert.match(schema, /campaign_buy/);
+});
+
 test("partner drops create verified classroom credentials", async () => {
   const [client, route, schema] = await Promise.all([
     readFile(new URL("../app/OnchainLab.tsx", import.meta.url), "utf8"),

@@ -55,7 +55,7 @@ test("production password gate protects pages and APIs without storing the passw
     ctx,
   );
   assert.equal(login.status, 303);
-  assert.match(login.headers.get("set-cookie") ?? "", /faceless_campus_gate=.*HttpOnly.*Secure.*SameSite=Strict/);
+  assert.match(login.headers.get("set-cookie") ?? "", /faceless_campus_gate=.*HttpOnly.*Secure.*SameSite=Lax.*Max-Age=2592000/);
 
   const environment = await readFile(new URL("../.env.example", import.meta.url), "utf8");
   assert.match(environment, /^SITE_PASSWORD=$/m);

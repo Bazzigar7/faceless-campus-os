@@ -100,7 +100,7 @@ async function enforceSitePassword(request: Request, password: string): Promise<
           status: 303,
           headers: {
             location: "/",
-            "set-cookie": `${ACCESS_COOKIE}=${expectedToken}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=43200`,
+            "set-cookie": `${ACCESS_COOKIE}=${expectedToken}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`,
             "cache-control": "no-store",
           },
         });

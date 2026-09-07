@@ -304,6 +304,10 @@ test("first Vibevibe buy is wallet-approved, verified onchain and shown in holdi
   ]);
   assert.match(client, /Buy your first token/);
   assert.match(client, /0\.01–0\.05 test ETH/);
+  assert.match(client, /Or enter an amount/);
+  assert.match(client, /min="0\.01" max="0\.05"/);
+  assert.match(client, /\/partners\/mask-campaign\.png/);
+  assert.match(client, /\$MASK/);
   assert.match(client, /buyVibevibeToken/);
   assert.match(client, /vibevibeMaskBalance/);
   assert.match(route, /campaign:vibevibe:first-buy/);

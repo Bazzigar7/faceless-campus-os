@@ -16,23 +16,32 @@ export async function GET(
 
   try {
     const { db, student } = await requireCampusUser(request);
-    const [ownMembership] = await db.select().from(cohortMembers).where(eq(cohortMembers.userId, student.id)).limit(1);
-    if (!ownMembership) return Response.json({ error: "Join your Campus cohort before sending tokens" }, { status: 403 });
-
-    const rows = await db
-      .select({
-        username: users.username,
-        displayName: users.displayName,
-        chain: wallets.chain,
-        address: wallets.address,
-        walletType: wallets.walletType,
-        provider: wallets.provider,
-      })
-      .from(users)
-      .innerJoin(cohortMembers, and(eq(cohortMembers.userId, users.id), eq(cohortMembers.cohortId, ownMembership.cohortId)))
-      .innerJoin(wallets, eq(wallets.userId, users.id))
-      .where(and(eq(users.username, username), eq(users.status, "active"), eq(wallets.isPrimary, true)))
-      .orderBy(asc(wallets.chain));
+    const selection = {
+      username: users.username,
+      displayName: users.displayName,
+      chain: wallets.chain,
+      address: wallets.address,
+      walletType: wallets.walletType,
+      provider: wallets.provider,
+    };
+    const cohortAccessRequired = process.env.CAMPUS_REQUIRE_COHORT === "true";
+    let rows;
+    if (cohortAccessRequired) {
+      const [ownMembership] = await db.select().from(cohortMembers).where(eq(cohortMembers.userId, student.id)).limit(1);
+      if (!ownMembership) return Response.json({ error: "Join your Campus cohort before sending tokens" }, { status: 403 });
+      rows = await db.select(selection)
+        .from(users)
+        .innerJoin(cohortMembers, and(eq(cohortMembers.userId, users.id), eq(cohortMembers.cohortId, ownMembership.cohortId)))
+        .innerJoin(wallets, eq(wallets.userId, users.id))
+        .where(and(eq(users.username, username), eq(users.status, "active"), eq(wallets.isPrimary, true)))
+        .orderBy(asc(wallets.chain));
+    } else {
+      rows = await db.select(selection)
+        .from(users)
+        .innerJoin(wallets, eq(wallets.userId, users.id))
+        .where(and(eq(users.username, username), eq(users.status, "active"), eq(wallets.isPrimary, true)))
+        .orderBy(asc(wallets.chain));
+    }
 
     if (rows.length === 0) {
       return Response.json({ error: "Username not found" }, { status: 404 });

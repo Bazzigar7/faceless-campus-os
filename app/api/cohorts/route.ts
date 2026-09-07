@@ -3,6 +3,7 @@ import { cohortAssignments, cohortMembers, cohorts, lessonProgress, users, walle
 import { faucetError, requireCampusUser, requireOwner } from "../../../lib/faucet-auth";
 
 function clean(value: unknown, max: number) { return String(value || "").trim().slice(0, max); }
+const cohortAccessRequired = process.env.CAMPUS_REQUIRE_COHORT === "true";
 
 async function cohortState(request: Request) {
   const { db, student } = await requireCampusUser(request);
@@ -44,7 +45,7 @@ async function cohortState(request: Request) {
   }) : [];
   return {
     role: student.role,
-    gateEnabled: cohortRows.some((cohort) => cohort.status === "active"),
+    gateEnabled: cohortAccessRequired && cohortRows.some((cohort) => cohort.status === "active"),
     membership: ownCohort ? { id: ownCohort.id, title: ownCohort.title, college: ownCohort.college, joinedAt: ownMembership?.joinedAt } : null,
     assignments: ownCohort ? assignmentRows.filter((assignment) => assignment.cohortId === ownCohort.id && assignment.status === "active") : [],
     cohorts: ownerCohorts,

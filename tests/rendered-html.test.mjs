@@ -599,7 +599,10 @@ test("wallet workspace combines faucet, transfers and network holdings", async (
   assert.match(client, /exportEthereumWallet/);
   assert.match(client, /exportSolanaWallet/);
   assert.match(suggestions, /like\(users\.username, `\$\{query\}%`\)/);
-  assert.match(suggestions, /eq\(cohortMembers\.cohortId, membership\.cohortId\)/);
+  assert.match(suggestions, /CAMPUS_REQUIRE_COHORT/);
+  assert.match(suggestions, /from\(users\)/);
   assert.match(resolver, /Join your Campus cohort before sending tokens/);
+  assert.match(resolver, /CAMPUS_REQUIRE_COHORT/);
+  assert.match(resolver, /innerJoin\(wallets, eq\(wallets\.userId, users\.id\)\)/);
   assert.match(resolver, /requireCampusUser\(request\)/);
 });

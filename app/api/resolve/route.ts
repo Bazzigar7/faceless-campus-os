@@ -8,20 +8,24 @@ export async function GET(request: Request) {
     const query = new URL(request.url).searchParams.get("query")?.trim().toLowerCase().replace(/^@/, "") ?? "";
     if (!/^[a-z0-9_]{1,24}$/.test(query)) return Response.json({ suggestions: [] });
 
-    const [membership] = await db.select().from(cohortMembers).where(eq(cohortMembers.userId, student.id)).limit(1);
-    if (!membership) return Response.json({ suggestions: [] });
-
-    const suggestions = await db.select({ username: users.username, displayName: users.displayName })
-      .from(cohortMembers)
-      .innerJoin(users, eq(users.id, cohortMembers.userId))
-      .where(and(
-        eq(cohortMembers.cohortId, membership.cohortId),
-        ne(users.id, student.id),
-        eq(users.status, "active"),
-        like(users.username, `${query}%`),
-      ))
-      .orderBy(asc(users.username))
-      .limit(6);
+    const cohortAccessRequired = process.env.CAMPUS_REQUIRE_COHORT === "true";
+    let suggestions: Array<{ username: string; displayName: string }>;
+    if (cohortAccessRequired) {
+      const [membership] = await db.select().from(cohortMembers).where(eq(cohortMembers.userId, student.id)).limit(1);
+      if (!membership) return Response.json({ suggestions: [] });
+      suggestions = await db.select({ username: users.username, displayName: users.displayName })
+        .from(cohortMembers)
+        .innerJoin(users, eq(users.id, cohortMembers.userId))
+        .where(and(eq(cohortMembers.cohortId, membership.cohortId), ne(users.id, student.id), eq(users.status, "active"), like(users.username, `${query}%`)))
+        .orderBy(asc(users.username))
+        .limit(6);
+    } else {
+      suggestions = await db.select({ username: users.username, displayName: users.displayName })
+        .from(users)
+        .where(and(ne(users.id, student.id), eq(users.status, "active"), like(users.username, `${query}%`)))
+        .orderBy(asc(users.username))
+        .limit(6);
+    }
 
     return Response.json({ suggestions });
   } catch (error) {
